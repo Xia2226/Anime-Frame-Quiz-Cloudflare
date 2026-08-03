@@ -1,0 +1,2 @@
+# 可选。留空时，每位访问者在首页填写自己的 DeepSeek API Key。
+DEEPSEEK_API_KEY=

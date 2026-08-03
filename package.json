@@ -1,0 +1,20 @@
+{
+  "name": "anime-frame-quiz-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "node --check worker.mjs && node --check public/app.js && wrangler deploy --dry-run"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "jpeg-js": "^0.4.4",
+    "undici": "^8.5.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.33.1"
+  }
+}

@@ -1,0 +1,26 @@
+﻿# Dependencies
+node_modules/
+.wrangler/
+.dev.vars
+
+# Runtime data (user-specific configs, favorites, progress)
+data/
+
+# Local test images
+images/
+
+# npm cache
+.npm-cache/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Java residue
+target/
+pom.xml

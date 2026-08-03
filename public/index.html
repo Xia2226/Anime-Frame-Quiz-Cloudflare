@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>动漫截图猜番</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section id="startScreen" class="startScreen">
+        <button
+          id="favoritesButton"
+          type="button"
+          class="favoritesButton"
+          aria-label="收藏动漫列表"
+          title="收藏动漫列表"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 17.3 6.18 20.9l1.64-7.03L2.5 9.24l7.19-.62L12 2l2.31 6.62 7.19.62-5.32 4.63 1.64 7.03Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button
+          id="settingsButton"
+          type="button"
+          class="settingsButton"
+          aria-label="随机挑战筛选设置"
+          title="随机挑战筛选设置"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"></path>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.42 1.42-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-2v-.48A1.7 1.7 0 0 0 12.38 18a1.7 1.7 0 0 0-1.88.34l-.06.06-1.42-1.42.06-.06A1.7 1.7 0 0 0 9.42 15a1.7 1.7 0 0 0-1.56-1.03H7.4v-2h.46A1.7 1.7 0 0 0 9.42 11a1.7 1.7 0 0 0-.34-1.88l-.06-.06 1.42-1.42.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 13.41 6.5V6h2v.5a1.7 1.7 0 0 0 1.03 1.54 1.7 1.7 0 0 0 1.88-.34l.06-.06 1.42 1.42-.06.06A1.7 1.7 0 0 0 19.4 11a1.7 1.7 0 0 0 1.56 1.03h.46v2h-.46A1.7 1.7 0 0 0 19.4 15Z"></path>
+          </svg>
+        </button>
+        <div class="startContent">
+          <p class="eyebrow">Anime Frame Quiz</p>
+          <h1>动漫截图猜番</h1>
+          <p class="startDesc">根据动漫截图，猜出正确的番剧名称</p>
+
+          <form id="apiKeyForm" class="apiKeyConfig">
+            <label for="deepSeekApiKeyInput">DeepSeek API Key（可选）</label>
+            <div class="apiKeyInputRow">
+              <input
+                id="deepSeekApiKeyInput"
+                name="deepSeekApiKey"
+                type="password"
+                maxlength="512"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="输入后仅在当前浏览器标签页使用"
+              />
+              <button id="apiKeySaveButton" type="submit">应用并检测</button>
+            </div>
+            <p id="apiKeySummary" class="apiKeySummary" role="status">
+              正在检查 Cloudflare Worker 环境 Secret DEEPSEEK_API_KEY...
+            </p>
+          </form>
+
+          <button id="startButton" type="button" class="startButton">
+            开始游戏
+          </button>
+          </div>
+          <div class="startFooter">
+            <p class="startHint">题库由 sakugabooru.com、trace.moe、AniList 提供支持</p>
+            <p class="startHint">trace.moe 由浏览器直连，搜索额度按当前公网 IP 计算</p>
+            <p id="settingsSummary" class="settingsSummary">筛选配置加载中...</p>
+          </div>
+      </section>
+
+      <section id="gameScreen" class="gameScreen hidden">
+        <button id="backButton" type="button" class="backButton" aria-label="返回首页" title="返回首页">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <section class="topbar">
+          <p class="eyebrow">Anime Frame Quiz</p>
+          <h1>动漫截图猜番</h1>
+          <div class="stats" aria-label="答题统计">
+            <div>
+              <span id="answeredCount">0</span>
+              <small>已答</small>
+            </div>
+            <div>
+              <span id="accuracyRate">0%</span>
+              <small>正确率</small>
+            </div>
+            <div>
+              <span id="poolCount">0/15</span>
+              <small>题库</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="quiz" aria-live="polite">
+          <div class="framePanelWrapper">
+            <button
+              id="prevHistoryButton"
+              type="button"
+              class="historyButton historyPrev hidden"
+              aria-label="上一题"
+              title="上一题"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button
+              id="nextHistoryButton"
+              type="button"
+              class="historyButton historyNext hidden"
+              aria-label="下一题"
+              title="下一题"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 18l6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="framePanel">
+              <div id="loadingLayer" class="loadingLayer">
+                <div class="spinner" aria-hidden="true"></div>
+                <p id="loadingText">正在准备题目...</p>
+              </div>
+              <img id="animeFrame" alt="待猜测的动漫截图" />
+            <button
+              id="favoriteButton"
+              type="button"
+              class="favoriteButton hidden"
+              aria-label="收藏此动漫"
+              title="收藏此动漫"
+              disabled
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="starOutline">
+                <path d="M12 17.3 6.18 20.9l1.64-7.03L2.5 9.24l7.19-.62L12 2l2.31 6.62 7.19.62-5.32 4.63 1.64 7.03Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              </svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="starFilled">
+                <path d="M12 17.3 6.18 20.9l1.64-7.03L2.5 9.24l7.19-.62L12 2l2.31 6.62 7.19.62-5.32 4.63 1.64 7.03Z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+          </div>
+
+          <div class="sidePanel">
+            <div class="questionHead">
+              <p id="statusText">初始化中</p>
+              <button id="skipButton" type="button" disabled>跳过</button>
+            </div>
+            <div id="options" class="options"></div>
+            <p id="feedback" class="feedback"></p>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div
+      id="settingsModal"
+      class="settingsModal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settingsTitle"
+    >
+      <section class="settingsDialog">
+        <header class="settingsHeader">
+          <div>
+            <p class="eyebrow">Sakugabooru Filter</p>
+            <h2 id="settingsTitle">随机挑战筛选设置</h2>
+          </div>
+          <button id="settingsCloseButton" type="button" class="settingsCloseButton" aria-label="关闭">×</button>
+        </header>
+
+        <form id="settingsForm" novalidate>
+          <fieldset>
+            <legend>投稿时间范围</legend>
+            <div class="settingsGrid">
+              <label>
+                <span>起始日期</span>
+                <input id="filterStartDate" name="startDate" type="date" min="2000-01-01" />
+                <small>可留空。建议按季度或年份筛选，最早支持 2000-01-01。</small>
+              </label>
+              <label>
+                <span>结束日期</span>
+                <input id="filterEndDate" name="endDate" type="date" min="2000-01-01" />
+                <small>可留空，不能早于起始日期，最晚为今天。</small>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>热度范围</legend>
+            <div class="settingsGrid">
+              <label>
+                <span>最低热度</span>
+                <input id="filterMinScore" name="minScore" type="number" min="-1000" max="100000" step="1" placeholder="例如 20" />
+                <small>对应帖子 score。建议 0–100；设为 20 可减少冷门片段。</small>
+              </label>
+              <label>
+                <span>最高热度</span>
+                <input id="filterMaxScore" name="maxScore" type="number" min="-1000" max="100000" step="1" placeholder="例如 300" />
+                <small>可留空，必须不低于最低热度；允许范围 -1000–100000。</small>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>内容分级</legend>
+            <label>
+              <span>允许的内容</span>
+              <select id="filterRating" name="rating">
+                <option value="s">Safe（安全，默认）</option>
+                <option value="q">Questionable（可能敏感）</option>
+                <option value="e">Explicit（成人内容）</option>
+                <option value="">全部分级</option>
+              </select>
+              <small>建议保持 Safe。选择其他分级可能出现不适合公开场景的内容。</small>
+            </label>
+          </fieldset>
+
+          <p id="settingsEffectiveTags" class="settingsEffectiveTags"></p>
+          <p id="settingsMessage" class="settingsMessage" role="status"></p>
+
+          <footer class="settingsActions">
+            <button id="settingsResetButton" type="button" class="settingsSecondaryButton">恢复默认</button>
+            <button id="settingsSaveButton" type="submit" class="settingsSaveButton">保存设置</button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <div
+      id="favoritesModal"
+      class="settingsModal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="favoritesTitle"
+    >
+      <section class="settingsDialog">
+        <header class="settingsHeader">
+          <div>
+            <p class="eyebrow">Favorites</p>
+            <h2 id="favoritesTitle">收藏动漫列表</h2>
+          </div>
+          <button id="favoritesCloseButton" type="button" class="settingsCloseButton" aria-label="关闭">×</button>
+        </header>
+        <div id="favoritesList" class="favoritesList">
+          <p class="favoritesEmpty">暂无收藏的动漫</p>
+        </div>
+        <p class="favoritesHint">收藏的动漫将不会出现在随机挑战中</p>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
