@@ -2,13 +2,32 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "anime-frame-quiz-cloudflare",
   "main": "worker.mjs",
-  "compatibility_date": "2026-08-03",
+  "compatibility_date": "2026-08-04",
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": true
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "anime-frame-quiz-leaderboard",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": ["17 16 * * *"]
   },
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.05
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01
+    }
   }
 }

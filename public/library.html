@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="动漫截图猜番图库资源统计，仅展示已收录截图的番剧。"
+    />
+    <title>图库资源 · 动漫截图猜番</title>
+    <link rel="stylesheet" href="./library.css" />
+  </head>
+  <body>
+    <a class="skipLink" href="#libraryContent">跳到图库内容</a>
+
+    <main class="libraryShell">
+      <header class="hero">
+        <a class="homeLink" href="./index.html" aria-label="返回游戏首页">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+          <span>返回首页</span>
+        </a>
+
+        <div class="heroCopy">
+          <p class="eyebrow">Anime Frame Quiz</p>
+          <h1>图库资源</h1>
+          <p>
+            仅统计精简资源文件中实际收录截图的番剧。页面不会加载截图原图，浏览和筛选不会产生逐条资源请求。
+          </p>
+        </div>
+
+        <div id="datasetBadge" class="datasetBadge" hidden>
+          <span>数据版本</span>
+          <strong id="datasetVersion">—</strong>
+        </div>
+      </header>
+
+      <section id="pageStatus" class="loadState" role="status" aria-live="polite">
+        <span class="loadStateIcon" aria-hidden="true"></span>
+        <div>
+          <h2 id="loadStateTitle">正在加载图库统计</h2>
+          <p id="loadStateDetail">正在读取精简资源文件，请稍候…</p>
+        </div>
+        <button id="retryButton" type="button" hidden>重新加载</button>
+      </section>
+
+      <div id="libraryContent" hidden>
+        <section class="overview" aria-labelledby="overviewTitle">
+          <div class="sectionHeading">
+            <div>
+              <p class="eyebrow">Overview</p>
+              <h2 id="overviewTitle">资源概览</h2>
+            </div>
+            <p>所有统计均在浏览器中由有效截图条目重新计算</p>
+          </div>
+
+          <div class="statsGrid">
+            <article class="statCard statCardBlue">
+              <span>收录番剧</span>
+              <strong id="animeTotal">—</strong>
+              <small>部 · 均含截图</small>
+            </article>
+            <article class="statCard statCardViolet">
+              <span>截图总数</span>
+              <strong id="imageTotal">—</strong>
+              <small>张 · 仅统计 ID</small>
+            </article>
+            <article class="statCard statCardCyan">
+              <span>观看总量</span>
+              <strong id="doneTotal">—</strong>
+              <small>Bangumi 完成/观看记录</small>
+            </article>
+            <article class="statCard statCardAmber">
+              <span>评分总量</span>
+              <strong id="ratingsTotal">—</strong>
+              <small>Bangumi 评分人数</small>
+            </article>
+            <article class="statCard statCardGreen">
+              <span>平均分</span>
+              <strong id="scoreAverage">—</strong>
+              <small id="scoreAverageHint">按评分人数加权</small>
+            </article>
+            <article class="statCard statCardRose">
+              <span>标签总数</span>
+              <strong id="tagTotal">—</strong>
+              <small>内容标签与元标签去重</small>
+            </article>
+          </div>
+        </section>
+
+        <section class="insightsGrid" aria-label="图库年度分布与常见标签">
+          <article class="panel chartPanel">
+            <div class="panelHeading">
+              <div>
+                <p class="eyebrow">Timeline</p>
+                <h2>年度资源分布</h2>
+              </div>
+              <div class="chartLegend" aria-hidden="true">
+                <span><i class="legendAnime"></i>番剧数</span>
+                <span><i class="legendImages"></i>截图数</span>
+              </div>
+            </div>
+            <div id="chartViewport" class="chartViewport">
+              <canvas id="annualChart" height="320" role="img">
+                当前浏览器不支持 Canvas，无法绘制年度资源图表。
+              </canvas>
+            </div>
+            <p id="chartSummary" class="chartSummary"></p>
+          </article>
+
+          <aside class="panel tagsPanel" aria-labelledby="tagsTitle">
+            <div class="panelHeading">
+              <div>
+                <p class="eyebrow">Tags</p>
+                <h2 id="tagsTitle">常见标签</h2>
+              </div>
+            </div>
+            <div id="topTags" class="topTags" aria-label="出现次数最多的标签"></div>
+            <p class="tagsHint">数字表示该标签覆盖的已收录番剧数量。</p>
+          </aside>
+        </section>
+
+        <section class="panel catalogPanel" aria-labelledby="catalogTitle">
+          <div class="panelHeading catalogHeading">
+            <div>
+              <p class="eyebrow">Catalog</p>
+              <h2 id="catalogTitle">番剧明细</h2>
+            </div>
+            <p id="resultSummary" class="resultSummary" aria-live="polite"></p>
+          </div>
+
+          <form id="filterForm" class="filters" novalidate>
+            <label class="filterField searchField">
+              <span>标题搜索</span>
+              <div class="inputWithIcon">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m16.5 16.5 4 4" />
+                </svg>
+                <input
+                  id="titleSearch"
+                  name="title"
+                  type="search"
+                  maxlength="100"
+                  autocomplete="off"
+                  placeholder="中文名、原名或 ID"
+                />
+              </div>
+            </label>
+
+            <div class="filterField tagSearchField">
+              <span>标签搜索</span>
+              <div class="tagSearchBox">
+                <input
+                  id="tagSearch"
+                  name="tagSearch"
+                  type="search"
+                  maxlength="60"
+                  autocomplete="off"
+                  placeholder="输入至少 2 个字符选择标签"
+                />
+                <div id="tagSearchResults" class="libraryTagResults" hidden></div>
+              </div>
+              <div id="selectedCatalogTags" class="selectedCatalogTags"><span>尚未选择标签</span></div>
+            </div>
+
+            <label class="filterField tagModeField">
+              <span>标签匹配</span>
+              <select id="tagModeFilter" name="tagMode">
+                <option value="any">匹配任一</option>
+                <option value="all">匹配全部</option>
+              </select>
+            </label>
+
+            <label class="filterField">
+              <span>首播年份</span>
+              <select id="yearFilter" name="year">
+                <option value="">全部年份</option>
+              </select>
+            </label>
+
+            <fieldset class="filterField scoreField" aria-describedby="scoreError">
+              <legend>评分范围</legend>
+              <div class="scoreInputs">
+                <label>
+                  <span class="visuallyHidden">最低评分</span>
+                  <input id="scoreMin" name="scoreMin" type="number" min="0" max="10" step="0.1" placeholder="最低" />
+                </label>
+                <span aria-hidden="true">—</span>
+                <label>
+                  <span class="visuallyHidden">最高评分</span>
+                  <input id="scoreMax" name="scoreMax" type="number" min="0" max="10" step="0.1" placeholder="最高" />
+                </label>
+              </div>
+              <small id="scoreError" class="fieldError" role="alert"></small>
+            </fieldset>
+
+            <label class="filterField">
+              <span>排序方式</span>
+              <select id="sortOrder" name="sort">
+                <option value="score-desc" selected>评分从高到低</option>
+                <option value="images-desc">截图数从多到少</option>
+                <option value="done-desc">观看数从多到少</option>
+                <option value="ratings-desc">评分人数从多到少</option>
+                <option value="date-desc">首播时间从新到旧</option>
+                <option value="date-asc">首播时间从旧到新</option>
+                <option value="rank-asc">Bangumi 排名优先</option>
+                <option value="title-asc">标题 A–Z</option>
+              </select>
+            </label>
+
+            <label class="filterField pageSizeField">
+              <span>每页显示</span>
+              <select id="pageSize" name="pageSize">
+                <option value="25">25 条</option>
+                <option value="50" selected>50 条</option>
+                <option value="100">100 条</option>
+              </select>
+            </label>
+          </form>
+
+          <div class="tableViewport">
+            <table class="catalogTable">
+              <caption class="visuallyHidden">含截图的番剧资源明细</caption>
+              <thead>
+                <tr>
+                  <th scope="col">番剧</th>
+                  <th scope="col">首播</th>
+                  <th scope="col">评分</th>
+                  <th scope="col">排名</th>
+                  <th scope="col">观看</th>
+                  <th scope="col">评分人数</th>
+                  <th scope="col">截图</th>
+                  <th scope="col">标签</th>
+                </tr>
+              </thead>
+              <tbody id="catalogBody"></tbody>
+            </table>
+          </div>
+
+          <nav class="pagination" aria-label="番剧列表分页">
+            <button id="previousPage" type="button">上一页</button>
+            <div id="pageNumbers" class="pageNumbers"></div>
+            <button id="nextPage" type="button">下一页</button>
+          </nav>
+        </section>
+      </div>
+
+      <noscript>
+        <section class="loadState loadStateError">
+          <div>
+            <h2>需要启用 JavaScript</h2>
+            <p>图库统计与筛选在浏览器本地完成，请启用 JavaScript 后重新打开本页。</p>
+          </div>
+        </section>
+      </noscript>
+    </main>
+
+    <script src="./library.js" defer></script>
+  </body>
+</html>

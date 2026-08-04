@@ -1,11 +1,31 @@
+import { GAME_CONFIG } from "./public/js/game-config.js";
+
 const SAKUGABOORU_API_URL = "https://www.sakugabooru.com/post.json";
 const SAKUGABOORU_RELATED_TAG_API_URL = "https://www.sakugabooru.com/tag/related.json";
 const ANILIST_API_URL = "https://graphql.anilist.co";
 const DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions";
 const DEEPSEEK_MODELS_API_URL = "https://api.deepseek.com/v1/models";
+const DEEPSEEK_BALANCE_API_URL = "https://api.deepseek.com/user/balance";
 const DEEPSEEK_TRANS_MODEL = "deepseek-v4-flash";
 
 const REQUEST_TIMEOUT_MS = 20000;
+const MAX_UPSTREAM_JSON_BYTES = 1024 * 1024;
+const MAX_UPSTREAM_ERROR_BYTES = 8 * 1024;
+const USERNAME_MAX_LENGTH = 24;
+const MAX_HARD_QUESTION_COUNT = 10000;
+const MAX_HARD_ELAPSED_MS = 7 * 24 * 60 * 60 * 1000;
+const LEADERBOARD_MODES = new Set(["classic", "hard"]);
+const LOCAL_SCORE_POINTS = [...new Set(GAME_CONFIG.scoreThresholds.map((tier) => Number(tier.points)))];
+const LOCAL_MAX_POINTS = Math.max(...LOCAL_SCORE_POINTS);
+const LOCAL_REACHABLE_SCORES = buildReachableScoreSets(
+  GAME_CONFIG.localQuestionCount,
+  LOCAL_SCORE_POINTS,
+);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LEADERBOARD_DATE_FORMATTER = new Intl.DateTimeFormat("en", {
+  timeZone: GAME_CONFIG.leaderboard.timeZone,
+  year: "numeric", month: "2-digit", day: "2-digit",
+});
 const MAX_EXCLUDED_COPYRIGHT_TAGS = 512;
 const MAX_VIDEO_BYTES = 24 * 1024 * 1024;
 const MIN_PREVIEW_WIDTH = 280;
@@ -36,67 +56,37 @@ export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
     try {
-      if (url.pathname === "/api/config-status") {
-        requireMethod(request, "GET");
-        return json({
-          deepSeekApiKey: {
-            configured: Boolean(normalizeDeepSeekApiKey(env.DEEPSEEK_API_KEY)),
-            source: normalizeDeepSeekApiKey(env.DEEPSEEK_API_KEY) ? "environment" : null,
-          },
-          traceMoe: {
-            requestSource: "browser",
-            quotaScope: "visitor-public-ip",
-          },
-        });
-      }
-
-      if (url.pathname === "/api/frame-source") {
-        requireMethod(request, "GET");
-        const excludedCopyrightTags = normalizeExcludedCopyrightTags(
-          url.searchParams.getAll("excludeCopyright"),
-        );
-        const filterConfig = validateFilter({
-          startDate: url.searchParams.get("startDate") || "",
-          endDate: url.searchParams.get("endDate") || "",
-          minScore: url.searchParams.get("minScore") || null,
-          maxScore: url.searchParams.get("maxScore") || null,
-          rating: url.searchParams.has("rating") ? url.searchParams.get("rating") : "s",
-        });
-        const source = await createFrameSource(
-          url.searchParams.get("tags") || "",
-          excludedCopyrightTags,
-          filterConfig,
-        );
-        return json(source);
-      }
-
-      if (url.pathname === "/api/frame-resolve") {
+      if (url.pathname === "/api/hard/sources") {
         requireMethod(request, "POST");
         const body = await readJsonBody(request, 64 * 1024);
-        const frame = await resolveFrameQuestion(body?.source, body?.traceResult);
-        return json(frame);
+        return json({ sources: await createHardSources(body) });
+      }
+
+      if (url.pathname === "/api/hard/resolve") {
+        requireMethod(request, "POST");
+        const apiKey = getRequestDeepSeekApiKey(request);
+        if (!apiKey) throw httpError(400, "请先输入并确认 DeepSeek API Key");
+        const body = await readJsonBody(request, 128 * 1024);
+        return json({ questions: await resolveHardQuestions(body, apiKey) });
+      }
+
+      if (url.pathname === "/api/leaderboard") {
+        if (request.method === "GET") {
+          return await handleLeaderboardGet(request, url, env, context);
+        }
+        if (request.method === "POST") {
+          return await handleLeaderboardPost(request, url, env);
+        }
+        requireMethod(request, "GET or POST");
       }
 
       if (url.pathname === "/api/deepseek/validate") {
         requireMethod(request, "POST");
-        const apiKey = getRequestDeepSeekApiKey(request, env);
+        const apiKey = getRequestDeepSeekApiKey(request);
         if (!apiKey) {
           return json({ valid: false, message: "请先输入 DeepSeek API Key" }, 400);
         }
         return json(await validateDeepSeekApiKey(apiKey));
-      }
-
-      if (url.pathname === "/api/deepseek/translate") {
-        requireMethod(request, "POST");
-        const apiKey = getRequestDeepSeekApiKey(request, env);
-        if (!apiKey) throw httpError(400, "请先配置或输入 DeepSeek API Key");
-        const body = await readJsonBody(request, 16 * 1024);
-        const text = normalizeTitle(body?.text);
-        const sourceLanguage = ["ja", "en", "auto"].includes(body?.sourceLanguage)
-          ? body.sourceLanguage
-          : "auto";
-        if (!text || text.length > 500) throw httpError(400, "缺少有效的待翻译标题");
-        return json({ title: await translateToChinese(text, sourceLanguage, apiKey) });
       }
 
       if (url.pathname.startsWith("/api/")) {
@@ -107,12 +97,39 @@ export default {
       const assetResponse = await env.ASSETS.fetch(request);
       return withSecurityHeaders(assetResponse);
     } catch (error) {
-      console.error(error?.message || error);
+      const statusCode = error?.statusCode || 500;
+      console.error(JSON.stringify({
+        level: "error",
+        event: "request_failed",
+        method: request.method,
+        path: url.pathname,
+        statusCode,
+        code: error?.code || null,
+        error: redactLogMessage(error?.message || error),
+      }));
       return json({
         error: error?.message || "Internal server error",
         code: error?.code || null,
-      }, error?.statusCode || 500);
+      }, statusCode);
     }
+  },
+
+  async scheduled(controller, env) {
+    requireLeaderboardDatabase(env);
+    const cutoffDate = new Date(
+      controller.scheduledTime
+        - (GAME_CONFIG.leaderboard.retentionDays - 1) * 24 * 60 * 60 * 1000,
+    );
+    const cutoffDay = getLeaderboardDayKey(cutoffDate);
+    const result = await env.DB.prepare("DELETE FROM daily_best WHERE day_key < ?")
+      .bind(cutoffDay)
+      .run();
+    console.log(JSON.stringify({
+      level: "info",
+      event: "leaderboard_retention_cleanup",
+      cutoffDay,
+      rowsDeleted: result.meta?.changes ?? null,
+    }));
   },
 };
 
@@ -125,19 +142,447 @@ function requireMethod(request, expected) {
 }
 
 async function readJsonBody(request, maximumBytes) {
-  const declaredLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
-    throw httpError(413, "请求体过大");
-  }
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > maximumBytes) {
-    throw httpError(413, "请求体过大");
-  }
+  const text = await readBodyTextWithLimit(request, maximumBytes, () => httpError(413, "请求体过大"));
   try {
     return text ? JSON.parse(text) : {};
   } catch (error) {
     throw httpError(400, `JSON 格式错误: ${error.message}`);
   }
+}
+
+async function readBodyTextWithLimit(message, maximumBytes, tooLargeErrorFactory) {
+  const declaredLength = Number(message.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+    throw tooLargeErrorFactory();
+  }
+  if (!message.body) return "";
+
+  const reader = message.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      totalBytes += chunk.byteLength;
+      if (totalBytes > maximumBytes) {
+        await reader.cancel().catch(() => {});
+        throw tooLargeErrorFactory();
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return new TextDecoder().decode(concatenateBytes(chunks, totalBytes));
+}
+
+async function readJsonResponse(response, maximumBytes, label) {
+  const text = await readBodyTextWithLimit(
+    response,
+    maximumBytes,
+    () => httpError(502, `${label}响应过大`),
+  );
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch (error) {
+    throw httpError(502, `${label}返回了无效 JSON: ${error.message}`);
+  }
+}
+
+async function readResponseSnippet(response, maximumBytes = MAX_UPSTREAM_ERROR_BYTES) {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  let truncated = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      const remaining = maximumBytes - totalBytes;
+      if (chunk.byteLength > remaining) {
+        if (remaining > 0) chunks.push(chunk.slice(0, remaining));
+        totalBytes = maximumBytes;
+        truncated = true;
+        await reader.cancel().catch(() => {});
+        break;
+      }
+      chunks.push(chunk);
+      totalBytes += chunk.byteLength;
+      if (totalBytes === maximumBytes) {
+        truncated = true;
+        await reader.cancel().catch(() => {});
+        break;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const text = new TextDecoder().decode(concatenateBytes(chunks, totalBytes));
+  return truncated ? `${text}…` : text;
+}
+
+function concatenateBytes(chunks, totalBytes) {
+  const result = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
+async function createHardSources(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw httpError(400, "请求体必须是对象");
+  }
+  const rawExclusions = input.excludeCopyrightTags ?? [];
+  if (!Array.isArray(rawExclusions)) {
+    throw httpError(400, "excludeCopyrightTags 必须是数组");
+  }
+  const excludedCopyrightTags = normalizeExcludedCopyrightTags(rawExclusions);
+  const configuredFilter = GAME_CONFIG.hard.sakugabooruFilter;
+  const sources = [];
+  for (let index = 0; index < GAME_CONFIG.hard.batchSize; index += 1) {
+    const source = await createFrameSource(
+      configuredFilter.tags,
+      excludedCopyrightTags,
+      configuredFilter,
+    );
+    sources.push(source);
+    for (const tag of source.sakugabooru.copyrightTags) excludedCopyrightTags.add(tag);
+  }
+  return sources;
+}
+
+async function resolveHardQuestions(input, apiKey) {
+  if (!input || typeof input !== "object" || !Array.isArray(input.entries)) {
+    throw httpError(400, "entries 必须是数组");
+  }
+  if (input.entries.length < 1 || input.entries.length > GAME_CONFIG.hard.batchSize) {
+    throw httpError(400, `entries 数量必须在 1 到 ${GAME_CONFIG.hard.batchSize} 之间`);
+  }
+  for (const entry of input.entries) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw httpError(400, "entries 中存在无效题目");
+    }
+  }
+
+  const questions = await Promise.all(input.entries.map((entry) => (
+    resolveFrameQuestion(entry.source, entry.traceResult)
+  )));
+  const translationTargets = questions
+    .map((question, questionIndex) => ({
+      questionIndex,
+      text: normalizeTitle(question.translation?.text) || normalizeTitle(question.title),
+      sourceLanguage: question.translation?.sourceLanguage || "auto",
+      needsTranslation: question.titleLanguage !== "zh" && !isLikelyChineseTitle(question.title),
+    }))
+    .filter((item) => item.needsTranslation && item.text);
+
+  if (translationTargets.length > 0) {
+    const translatedTitles = await translateTitlesToChineseBatch(translationTargets, apiKey);
+    for (const target of translationTargets) {
+      const translatedTitle = translatedTitles.get(target.questionIndex);
+      const question = questions[target.questionIndex];
+      question.title = translatedTitle;
+      question.titleLanguage = "zh";
+      question.titleSource = "deepseek-batch";
+      question.translation = {
+        ...question.translation,
+        translatedTitle,
+      };
+    }
+  }
+  return questions;
+}
+
+async function translateTitlesToChineseBatch(items, apiKey) {
+  const systemPrompt = [
+    "你是动漫名称翻译助手。把输入数组中的每个标题转换为中国大陆最常用的简体中文译名。",
+    "只输出 JSON 数组，不要 Markdown、解释或额外字段。",
+    "每项格式必须是 {\"index\":数字,\"title\":\"译名\"}，index 必须与输入一致。",
+    "已经是简体中文的标题原样返回；没有官方译名时使用最常见的简体中文民间译名。",
+  ].join("\n");
+  let response;
+  try {
+    response = await fetchWithRetry(DEEPSEEK_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: DEEPSEEK_TRANS_MODEL,
+        thinking: { type: "disabled" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: JSON.stringify(items.map((item) => ({
+            index: item.questionIndex,
+            text: item.text,
+            sourceLanguage: item.sourceLanguage,
+          }))) },
+        ],
+        temperature: 0.1,
+        max_tokens: Math.max(100, items.length * 80),
+      }),
+    }, { attempts: 2, label: "DeepSeek 批量翻译", timeoutMs: 6000 });
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) throw httpError(401, "DeepSeek API Key 无效或没有访问权限");
+    if (error.status === 402) throw httpError(400, "DeepSeek 余额或额度不足");
+    if (error.status === 429) throw httpError(503, "DeepSeek 请求过于频繁，请稍后重试");
+    throw error;
+  }
+  const data = await readJsonResponse(response, 128 * 1024, "DeepSeek 批量翻译");
+  const content = normalizeTitle(data?.choices?.[0]?.message?.content);
+  const parsed = parseJsonArrayFromModel(content);
+  const expectedIndexes = new Set(items.map((item) => item.questionIndex));
+  const result = new Map();
+  for (const item of parsed) {
+    const index = Number(item?.index);
+    const title = normalizeTitle(item?.title);
+    if (!Number.isInteger(index) || !expectedIndexes.has(index) || !title || title.length > 200) continue;
+    result.set(index, title);
+  }
+  if (result.size !== expectedIndexes.size) {
+    throw httpError(502, "DeepSeek 批量翻译结果不完整");
+  }
+  return result;
+}
+
+function parseJsonArrayFromModel(content) {
+  const start = content.indexOf("[");
+  const end = content.lastIndexOf("]");
+  if (start < 0 || end < start) throw httpError(502, "DeepSeek 批量翻译未返回 JSON 数组");
+  try {
+    const parsed = JSON.parse(content.slice(start, end + 1));
+    if (!Array.isArray(parsed)) throw new Error("不是数组");
+    return parsed;
+  } catch (error) {
+    throw httpError(502, `DeepSeek 批量翻译 JSON 无效: ${error.message}`);
+  }
+}
+
+async function handleLeaderboardGet(request, url, env, context) {
+  const mode = normalizeLeaderboardMode(url.searchParams.get("mode"));
+  const dayKey = getLeaderboardDayKey();
+  requireLeaderboardDatabase(env);
+  const cacheUrl = new URL("/api/leaderboard", request.url);
+  cacheUrl.searchParams.set("mode", mode);
+  cacheUrl.searchParams.set("dayKey", dayKey);
+  const cacheRequest = new Request(cacheUrl, { method: "GET" });
+  const cached = await caches.default.match(cacheRequest);
+  if (cached) return cached;
+
+  const queryResult = await createLeaderboardSelectStatement(env.DB, mode, dayKey).all();
+  const entries = formatLeaderboardEntries(queryResult.results || []);
+  const response = json({ dayKey, mode, entries }, 200, {
+    "Cache-Control": `public, max-age=${GAME_CONFIG.leaderboard.cacheSeconds}`,
+  });
+  context.waitUntil(caches.default.put(cacheRequest, response.clone()).catch((error) => {
+    console.error(JSON.stringify({
+      level: "error",
+      event: "leaderboard_cache_put_failed",
+      error: redactLogMessage(error?.message || error),
+    }));
+  }));
+  return response;
+}
+
+async function handleLeaderboardPost(request, url, env) {
+  const mode = normalizeLeaderboardMode(url.searchParams.get("mode"));
+  requireLeaderboardDatabase(env);
+  const body = await readJsonBody(request, 16 * 1024);
+  const submission = normalizeLeaderboardSubmission(mode, body);
+  const dayKey = getLeaderboardDayKey();
+  const completedAt = Date.now();
+  const upsert = createLeaderboardUpsertStatement(env.DB, dayKey, mode, submission, completedAt);
+  const top = createLeaderboardSelectStatement(env.DB, mode, dayKey);
+  const personal = env.DB.prepare(`
+    SELECT participant_id, username, score, correct_count, question_count,
+           accuracy_ppm, elapsed_ms, completed_at
+    FROM daily_best
+    WHERE day_key = ? AND mode = ? AND participant_id = ?
+    LIMIT 1
+  `).bind(dayKey, mode, submission.participantId);
+  const [, topResult, personalResult] = await env.DB.batch([upsert, top, personal]);
+  const rows = topResult.results || [];
+  const entries = formatLeaderboardEntries(rows);
+  const personalRow = personalResult.results?.[0] || null;
+  const personalRankIndex = rows.findIndex((row) => row.participant_id === submission.participantId);
+  const personalBest = personalRow
+    ? formatLeaderboardEntry(personalRow, personalRankIndex >= 0 ? personalRankIndex + 1 : null)
+    : null;
+  return json({ dayKey, mode, entries, personalBest });
+}
+
+function normalizeLeaderboardMode(value) {
+  const mode = String(value || "").trim();
+  if (!LEADERBOARD_MODES.has(mode)) {
+    throw httpError(400, "mode 必须是 classic 或 hard");
+  }
+  return mode;
+}
+
+function normalizeLeaderboardSubmission(mode, body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw httpError(400, "请求体必须是对象");
+  }
+  const participantId = String(body.participantId || "").trim().toLowerCase();
+  if (!UUID_PATTERN.test(participantId)) throw httpError(400, "participantId 必须是标准 UUID");
+  const username = normalizeLeaderboardUsername(body.username);
+  const questionCount = requireInteger(body.questionCount, "questionCount", 1, MAX_HARD_QUESTION_COUNT);
+  if (mode === "classic" && questionCount !== GAME_CONFIG.localQuestionCount) {
+    throw httpError(400, `classic 模式必须完整完成 ${GAME_CONFIG.localQuestionCount} 题`);
+  }
+  if (mode === "hard" && questionCount < GAME_CONFIG.hard.minRankQuestions) {
+    throw httpError(400, `困难模式至少连续完成 ${GAME_CONFIG.hard.minRankQuestions} 题才能上榜`);
+  }
+  const correctCount = requireInteger(body.correctCount, "correctCount", 0, questionCount);
+  const scoreMaximum = mode === "hard" ? 0 : questionCount * LOCAL_MAX_POINTS;
+  const score = requireInteger(body.score, "score", 0, scoreMaximum);
+  if (mode === "hard") {
+    if (score !== 0) throw httpError(400, "困难模式排行榜不记录分数，score 必须为 0");
+  } else {
+    if (!LOCAL_REACHABLE_SCORES[correctCount]?.has(score)) {
+      throw httpError(
+        400,
+        `经典模式答对 ${correctCount} 题时，score 不是当前计分配置下的可达分数`,
+      );
+    }
+  }
+  const maximumElapsedMs = mode === "hard"
+    ? MAX_HARD_ELAPSED_MS
+    : questionCount * GAME_CONFIG.questionSeconds * 1000;
+  const elapsedMs = requireInteger(body.elapsedMs, "elapsedMs", 0, maximumElapsedMs);
+  return {
+    participantId,
+    username,
+    score,
+    correctCount,
+    questionCount,
+    accuracyPpm: Math.round((correctCount * 1_000_000) / questionCount),
+    elapsedMs,
+  };
+}
+
+function normalizeLeaderboardUsername(value) {
+  if (typeof value !== "string") throw httpError(400, "username 必须是字符串");
+  const username = value.trim().normalize("NFKC");
+  if (!username || Array.from(username).length > USERNAME_MAX_LENGTH) {
+    throw httpError(400, `username 长度必须为 1 到 ${USERNAME_MAX_LENGTH} 个字符`);
+  }
+  if (/[\p{Cc}\p{Cf}\p{Cs}]/u.test(username)) {
+    throw httpError(400, "username 包含不允许的控制字符");
+  }
+  return username;
+}
+
+function requireInteger(value, fieldName, minimum, maximum) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw httpError(400, `${fieldName} 必须是 ${minimum} 到 ${maximum} 之间的整数`);
+  }
+  return value;
+}
+
+function buildReachableScoreSets(questionCount, points) {
+  const sets = [new Set([0])];
+  for (let count = 1; count <= questionCount; count += 1) {
+    const next = new Set();
+    for (const subtotal of sets[count - 1]) {
+      for (const point of points) next.add(subtotal + point);
+    }
+    sets.push(next);
+  }
+  return sets;
+}
+
+function requireLeaderboardDatabase(env) {
+  if (!env.DB) throw httpError(503, "排行榜数据库暂不可用");
+}
+
+function getLeaderboardDayKey(date = new Date()) {
+  const parts = Object.fromEntries(
+    LEADERBOARD_DATE_FORMATTER.formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function createLeaderboardUpsertStatement(db, dayKey, mode, value, completedAt) {
+  const commonSql = `
+    INSERT INTO daily_best (
+      day_key, mode, participant_id, username, score, correct_count,
+      question_count, accuracy_ppm, elapsed_ms, completed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(day_key, mode, participant_id) DO UPDATE SET
+      username = excluded.username,
+      score = excluded.score,
+      correct_count = excluded.correct_count,
+      question_count = excluded.question_count,
+      accuracy_ppm = excluded.accuracy_ppm,
+      elapsed_ms = excluded.elapsed_ms,
+      completed_at = excluded.completed_at
+  `;
+  const bestCondition = mode === "hard"
+    ? `WHERE excluded.accuracy_ppm > daily_best.accuracy_ppm
+       OR (excluded.accuracy_ppm = daily_best.accuracy_ppm
+           AND excluded.question_count > daily_best.question_count)
+       OR (excluded.accuracy_ppm = daily_best.accuracy_ppm
+           AND excluded.question_count = daily_best.question_count
+           AND excluded.elapsed_ms < daily_best.elapsed_ms)`
+    : `WHERE excluded.score > daily_best.score
+       OR (excluded.score = daily_best.score
+           AND excluded.elapsed_ms < daily_best.elapsed_ms)`;
+  return db.prepare(`${commonSql} ${bestCondition}`).bind(
+    dayKey,
+    mode,
+    value.participantId,
+    value.username,
+    value.score,
+    value.correctCount,
+    value.questionCount,
+    value.accuracyPpm,
+    value.elapsedMs,
+    completedAt,
+  );
+}
+
+function createLeaderboardSelectStatement(db, mode, dayKey) {
+  const orderBy = mode === "hard"
+    ? "accuracy_ppm DESC, question_count DESC, elapsed_ms ASC, completed_at ASC"
+    : "score DESC, elapsed_ms ASC, completed_at ASC";
+  return db.prepare(`
+    SELECT participant_id, username, score, correct_count, question_count,
+           accuracy_ppm, elapsed_ms, completed_at
+    FROM daily_best
+    WHERE day_key = ? AND mode = ?
+    ORDER BY ${orderBy}
+  `).bind(dayKey, mode);
+}
+
+function formatLeaderboardEntries(rows) {
+  return rows.map((row, index) => formatLeaderboardEntry(row, index + 1));
+}
+
+function formatLeaderboardEntry(row, rank) {
+  const completedAtMs = Number(row.completed_at);
+  return {
+    rank,
+    username: String(row.username),
+    score: Number(row.score),
+    correctCount: Number(row.correct_count),
+    questionCount: Number(row.question_count),
+    accuracyPpm: Number(row.accuracy_ppm),
+    accuracy: Number((Number(row.accuracy_ppm) / 10000).toFixed(2)),
+    elapsedMs: Number(row.elapsed_ms),
+    completedAt: new Date(completedAtMs).toISOString(),
+  };
 }
 
 async function createFrameSource(customTags, excludedCopyrightTags, filterConfig) {
@@ -178,7 +623,7 @@ async function createFrameSource(customTags, excludedCopyrightTags, filterConfig
       skippedCopyrightCandidates: skipped,
     };
   }
-  throw httpError(503, `连续 ${SOURCE_ATTEMPTS} 个候选均与近期作品或收藏重复，请稍后重试`);
+  throw httpError(503, `连续 ${SOURCE_ATTEMPTS} 个候选均与近期作品重复，请稍后重试`);
 }
 
 async function resolveFrameQuestion(source, traceResult) {
@@ -235,7 +680,7 @@ function validateTraceMediaUrl(value, label) {
 function getCandidatePool(tags) {
   let pool = candidatePools.get(tags);
   if (!pool) {
-    pool = { items: [], recentIds: [], refillPromise: null };
+    pool = { items: [], recentIds: [] };
   } else {
     candidatePools.delete(tags);
   }
@@ -256,28 +701,20 @@ async function takeCandidate(pool, tags) {
 }
 
 async function refillCandidatePool(pool, tags) {
-  if (pool.refillPromise) return pool.refillPromise;
-  pool.refillPromise = (async () => {
-    const apiUrl = new URL(SAKUGABOORU_API_URL);
-    apiUrl.searchParams.set("limit", String(CANDIDATE_FETCH_LIMIT));
-    apiUrl.searchParams.set("tags", tags);
-    const response = await fetchWithRetry(apiUrl, {
-      headers: { Accept: "application/json", Referer: "https://www.sakugabooru.com/" },
-    }, { attempts: 3, label: "Sakugabooru" });
-    const data = await response.json();
-    const posts = (Array.isArray(data) ? data : data?.posts || data?.value || [])
-      .map(normalizeVideoPost)
-      .filter(Boolean);
-    const knownIds = new Set([...pool.items.map((item) => item.id), ...pool.recentIds]);
-    for (const post of shuffle(posts.filter((item) => !knownIds.has(item.id)))) {
-      if (pool.items.length >= CANDIDATE_POOL_LIMIT) break;
-      pool.items.push(post);
-    }
-  })();
-  try {
-    await pool.refillPromise;
-  } finally {
-    pool.refillPromise = null;
+  const apiUrl = new URL(SAKUGABOORU_API_URL);
+  apiUrl.searchParams.set("limit", String(CANDIDATE_FETCH_LIMIT));
+  apiUrl.searchParams.set("tags", tags);
+  const response = await fetchWithRetry(apiUrl, {
+    headers: { Accept: "application/json", Referer: "https://www.sakugabooru.com/" },
+  }, { attempts: 3, label: "Sakugabooru" });
+  const data = await readJsonResponse(response, MAX_UPSTREAM_JSON_BYTES, "Sakugabooru");
+  const posts = (Array.isArray(data) ? data : data?.posts || data?.value || [])
+    .map(normalizeVideoPost)
+    .filter(Boolean);
+  const knownIds = new Set([...pool.items.map((item) => item.id), ...pool.recentIds]);
+  for (const post of shuffle(posts.filter((item) => !knownIds.has(item.id)))) {
+    if (pool.items.length >= CANDIDATE_POOL_LIMIT) break;
+    pool.items.push(post);
   }
 }
 
@@ -330,7 +767,7 @@ async function resolveCopyrightTags(tagString) {
     const response = await fetchWithRetry(url, {
       headers: { Accept: "application/json", Referer: "https://www.sakugabooru.com/" },
     }, { attempts: 3, label: "Sakugabooru 标签" });
-    const data = await response.json();
+    const data = await readJsonResponse(response, MAX_UPSTREAM_JSON_BYTES, "Sakugabooru 标签");
     const related = data?.value && typeof data.value === "object" ? data.value : data;
     for (const tag of unresolved) {
       const relations = Array.isArray(related?.[tag]) ? related[tag] : [];
@@ -454,28 +891,25 @@ async function resolveAnimeTitles(traceResult) {
 }
 
 async function fetchAniListById(id) {
-  if (anilistCache.has(id)) return anilistCache.get(id);
-  const promise = (async () => {
-    const query = `query ($id: Int!) { Media(id: $id, type: ANIME) { id idMal countryOfOrigin isAdult title { romaji english native } synonyms } }`;
-    const response = await fetchWithRetry(ANILIST_API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ query, variables: { id } }),
-    }, { attempts: 1, label: "AniList", timeoutMs: 6000 });
-    const data = await response.json();
-    if (data?.errors?.length || !data?.data?.Media) {
-      throw new Error(data?.errors?.[0]?.message || "未找到番剧");
-    }
-    return data.data.Media;
-  })();
-  anilistCache.set(id, promise);
-  trimCache(anilistCache, ANILIST_CACHE_LIMIT);
-  try {
-    return await promise;
-  } catch (error) {
+  if (anilistCache.has(id)) {
+    const cached = anilistCache.get(id);
     anilistCache.delete(id);
-    throw error;
+    anilistCache.set(id, cached);
+    return cached;
   }
+  const query = `query ($id: Int!) { Media(id: $id, type: ANIME) { id idMal countryOfOrigin isAdult title { romaji english native } synonyms } }`;
+  const response = await fetchWithRetry(ANILIST_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ query, variables: { id } }),
+  }, { attempts: 1, label: "AniList", timeoutMs: 6000 });
+  const data = await readJsonResponse(response, 256 * 1024, "AniList");
+  if (data?.errors?.length || !data?.data?.Media) {
+    throw new Error(data?.errors?.[0]?.message || "未找到番剧");
+  }
+  anilistCache.set(id, data.data.Media);
+  trimCache(anilistCache, ANILIST_CACHE_LIMIT);
+  return data.data.Media;
 }
 
 function findChineseTitle(media = {}) {
@@ -489,65 +923,69 @@ function findChineseTitle(media = {}) {
   return "";
 }
 
+function isLikelyChineseTitle(value) {
+  return /\p{Script=Han}/u.test(value)
+    && !/[\u3040-\u30ff\u31f0-\u31ff\u1100-\u11ff\uac00-\ud7af]/u.test(value);
+}
+
 function normalizeDeepSeekApiKey(value) {
   if (typeof value !== "string") return "";
   const key = value.trim();
   return key === "你的APIkey" || key.length > 512 ? "" : key;
 }
 
-function getRequestDeepSeekApiKey(request, env) {
-  return normalizeDeepSeekApiKey(env.DEEPSEEK_API_KEY)
-    || normalizeDeepSeekApiKey(request.headers.get("x-deepseek-api-key"));
+function getRequestDeepSeekApiKey(request) {
+  return normalizeDeepSeekApiKey(request.headers.get("x-deepseek-api-key"));
 }
 
 async function validateDeepSeekApiKey(apiKey) {
   try {
-    const response = await fetchWithRetry(DEEPSEEK_MODELS_API_URL, {
-      headers: { Accept: "application/json", Authorization: `Bearer ${apiKey}` },
-    }, { attempts: 1, label: "DeepSeek API Key 检测", timeoutMs: 10000 });
-    const data = await response.json();
-    const models = Array.isArray(data?.data) ? data.data.map((item) => normalizeTitle(item?.id)) : [];
-    return models.includes(DEEPSEEK_TRANS_MODEL)
-      ? { valid: true, message: `API Key 可用，已检测到模型 ${DEEPSEEK_TRANS_MODEL}` }
-      : { valid: false, message: `API Key 有效，但当前账户无法使用模型 ${DEEPSEEK_TRANS_MODEL}` };
+    const authorization = { Accept: "application/json", Authorization: `Bearer ${apiKey}` };
+    const [modelsResponse, balanceResponse] = await Promise.all([
+      fetchWithRetry(DEEPSEEK_MODELS_API_URL, {
+        headers: authorization,
+      }, { attempts: 1, label: "DeepSeek 模型检测", timeoutMs: 10000 }),
+      fetchWithRetry(DEEPSEEK_BALANCE_API_URL, {
+        headers: authorization,
+      }, { attempts: 1, label: "DeepSeek 余额检测", timeoutMs: 10000 }),
+    ]);
+    const [modelsData, balanceData] = await Promise.all([
+      readJsonResponse(modelsResponse, 256 * 1024, "DeepSeek 模型检测"),
+      readJsonResponse(balanceResponse, 256 * 1024, "DeepSeek 余额检测"),
+    ]);
+    const models = Array.isArray(modelsData?.data)
+      ? modelsData.data.map((item) => normalizeTitle(item?.id)).filter(Boolean)
+      : [];
+    const cnyInfo = Array.isArray(balanceData?.balance_infos)
+      ? balanceData.balance_infos.find((item) => String(item?.currency || "").toUpperCase() === "CNY")
+      : null;
+    const balance = Number(cnyInfo?.total_balance);
+    if (!Number.isFinite(balance) || balance < 0) {
+      return { valid: false, message: "API Key 有效，但未读取到人民币余额", balance: null, currency: "CNY" };
+    }
+    if (!models.includes(DEEPSEEK_TRANS_MODEL)) {
+      return {
+        valid: false,
+        message: `API Key 有效，但当前账户无法使用模型 ${DEEPSEEK_TRANS_MODEL}`,
+        balance,
+        currency: "CNY",
+      };
+    }
+    if (balanceData?.is_available === false || balance <= 1) {
+      return { valid: false, message: "DeepSeek 人民币可用余额必须严格大于 1 元", balance, currency: "CNY" };
+    }
+    return {
+      valid: true,
+      message: `API Key 可用，人民币余额 ${balance.toFixed(2)} 元`,
+      balance,
+      currency: "CNY",
+    };
   } catch (error) {
-    if (error.status === 401 || error.status === 403) return { valid: false, message: "API Key 无效或没有访问权限" };
-    if (error.status === 402) return { valid: false, message: "API Key 有效，但账户余额或额度不足" };
+    if (error.status === 401 || error.status === 403) return { valid: false, message: "API Key 无效或没有访问权限", balance: null };
+    if (error.status === 402) return { valid: false, message: "API Key 有效，但账户余额或额度不足", balance: null };
     if (error.status === 429) throw httpError(503, "DeepSeek 请求过于频繁，请稍后再检测");
     throw httpError(502, `暂时无法连接 DeepSeek：${error.message}`);
   }
-}
-
-async function translateToChinese(text, sourceLanguage, apiKey) {
-  const systemPrompt = [
-    "你是动漫名称翻译助手。无论输入是什么语言，你都只输出一个结果：中国大陆官方简体中文译名。",
-    "规则：",
-    "1. 输入可能是日文、英文、罗马音、繁体中文或简体中文，全部翻译为大陆简体中文",
-    "2. 优先使用大陆官方译名或 B站/腾讯视频等主流平台通用译名",
-    "3. 只输出简体中文译名本身，不加任何解释、标点或备注",
-    "4. 有多个译名时只返回最通用的一个，禁止输出台译、港译",
-    "5. 输入已经是简体中文时原样返回",
-    "6. 无官方译名时给出最通用的民间简体译名，不备注",
-  ].join("\n");
-  const response = await fetchWithRetry(DEEPSEEK_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: DEEPSEEK_TRANS_MODEL,
-      thinking: { type: "disabled" },
-      messages: [{ role: "system", content: systemPrompt }, { role: "user", content: text }],
-      temperature: 0.1,
-      max_tokens: 50,
-    }),
-  }, { attempts: 2, label: "DeepSeek 翻译", timeoutMs: 3000 });
-  const data = await response.json();
-  const title = normalizeTitle(data?.choices?.[0]?.message?.content);
-  if (!title) throw httpError(502, "DeepSeek 翻译未返回有效中文标题");
-  return title;
 }
 
 async function fetchWithRetry(url, options = {}, retryOptions = {}) {
@@ -557,7 +995,7 @@ async function fetchWithRetry(url, options = {}, retryOptions = {}) {
     try {
       const response = await fetchWithTimeout(url, options, retryOptions.timeoutMs || REQUEST_TIMEOUT_MS);
       if (response.ok) return response;
-      const body = await response.text().catch(() => "");
+      const body = await readResponseSnippet(response).catch(() => "");
       const error = new Error(`${retryOptions.label || "上游 API"} HTTP ${response.status}${body ? `: ${body.slice(0, 500)}` : ""}`);
       error.status = response.status;
       lastError = error;
@@ -590,7 +1028,7 @@ function withSecurityHeaders(response) {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self'",
-    "img-src 'self' data: https://trace.moe https://*.trace.moe",
+    "img-src 'self' data: blob: https://cdni.fancaps.net https://trace.moe https://*.trace.moe",
     "media-src 'self' https://trace.moe https://*.trace.moe",
     "connect-src 'self' https://api.trace.moe",
     "base-uri 'self'",
@@ -600,13 +1038,14 @@ function withSecurityHeaders(response) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function json(value, status = 200) {
+function json(value, status = 200, additionalHeaders = {}) {
   return new Response(JSON.stringify(value), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
+      ...additionalHeaders,
     },
   });
 }
@@ -615,6 +1054,13 @@ function httpError(statusCode, message) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+function redactLogMessage(value) {
+  return String(value || "Unknown error")
+    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+    .slice(0, 500);
 }
 
 function normalizeTitle(value) {
