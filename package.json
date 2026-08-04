@@ -2,19 +2,21 @@
   "name": "anime-frame-quiz-cloudflare",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "start": "wrangler dev",
     "deploy": "wrangler deploy",
-    "check": "node --check worker.mjs && node --check public/app.js && wrangler deploy --dry-run"
+    "build:data": "node scripts/build-anime-library.mjs",
+    "check:data": "node scripts/build-anime-library.mjs --check",
+    "check:js": "node --check worker.mjs && node --check public/app.js && node --check public/library.js && node --check public/js/catalog.js && node --check public/js/game-config.js && node --check public/js/hard-provider.js && node --check public/js/leaderboard.js && node --check public/js/quiz-engine.js",
+    "db:migrate:local": "wrangler d1 migrations apply anime-frame-quiz-leaderboard --local",
+    "db:migrate:remote": "wrangler d1 migrations apply anime-frame-quiz-leaderboard --remote",
+    "check": "npm run check:data && npm run check:js && wrangler deploy --dry-run"
   },
   "engines": {
     "node": ">=22.19.0"
   },
-  "dependencies": {
-    "jpeg-js": "^0.4.4",
-    "undici": "^8.5.0"
-  },
   "devDependencies": {
-    "wrangler": "^4.33.1"
+    "wrangler": "^4.118.0"
   }
 }

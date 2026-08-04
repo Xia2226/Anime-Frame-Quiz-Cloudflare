@@ -1,0 +1,9 @@
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob: https://cdni.fancaps.net https://trace.moe https://*.trace.moe; media-src 'self' blob: https://trace.moe https://*.trace.moe; connect-src 'self' https://api.trace.moe; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  X-Frame-Options: DENY
+
+/data/*
+  Cache-Control: public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400

@@ -3,8 +3,13 @@ node_modules/
 .wrangler/
 .dev.vars
 
-# Runtime data (user-specific configs, favorites, progress)
-data/
+# Legacy local runtime data
+/data/
+
+# Large build-time source datasets (never served or committed)
+resources/fancaps_anime_images.jsonl
+resources/subject.jsonlines
+.tmp-workers-types/
 
 # Local test images
 images/

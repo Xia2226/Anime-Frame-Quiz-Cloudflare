@@ -1,1502 +1,1051 @@
-const MAX_POOL_SIZE = 15;
-const MIN_READY_SIZE = 1;
-const RECENT_ANSWERED_QUESTION_LIMIT = 50;
-const MAX_EXCLUDED_COPYRIGHT_TAGS = 512;
-const MAX_HISTORY_SIZE = 5;
-const MAX_TITLE_BANK_SIZE = 200;
-const QUOTA_THRESHOLD = 0;
-const FETCH_INTERVAL_MS = 1500;
-const REQUEST_TIMEOUT_MS = 90000;
-const API_KEY_VALIDATION_TIMEOUT_MS = 15000;
-const TRACE_SEARCH_TIMEOUT_MS = 60000;
-const TRACE_SEARCH_RETRY_LIMIT = 3;
-const TRACE_MOE_API_URL = "https://api.trace.moe/search";
-const TRACE_MOE_ACCOUNT_URL = "https://api.trace.moe/me";
-const DEEPSEEK_SESSION_STORAGE_KEY = "anime-frame-quiz.deepseek-api-key";
-const FILTER_STORAGE_KEY = "anime-frame-quiz.filter.v1";
-const FAVORITES_STORAGE_KEY = "anime-frame-quiz.favorites.v1";
-const TRANSLATION_STORAGE_KEY = "anime-frame-quiz.translations.v1";
-const MAX_FAVORITES = 500;
-const MAX_TRANSLATION_CACHE_SIZE = 2000;
-const DEFAULT_FILTER_CONFIG = {
-  startDate: "",
-  endDate: "",
-  minScore: null,
-  maxScore: null,
-  rating: "s",
+import { GAME_CONFIG } from './js/game-config.js';
+import { createLocalQuestionProvider, filterAnime, loadCatalog, searchTags } from './js/catalog.js';
+import { HardQuestionProvider } from './js/hard-provider.js';
+import { QuizEngine } from './js/quiz-engine.js';
+import { getLeaderboard, normalizeUsername, readLeaderboardProfile, saveLeaderboardProfile, submitLeaderboardResult } from './js/leaderboard.js';
+
+const HARD_KEY_STORAGE = 'anime-frame-quiz.deepseek-api-key.v2';
+const GAME_GUIDE_STORAGE = 'anime-frame-quiz.game-guide-seen.v1';
+const LOCAL_COUNT = GAME_CONFIG.localQuestionCount;
+const LOCAL_MAX_SCORE = LOCAL_COUNT * Math.max(...GAME_CONFIG.scoreThresholds.map((tier) => tier.points));
+const DEFAULT_FREE_FILTER = Object.freeze({
+  titleQuery: '', startDate: '', endDate: '', minScore: null, maxScore: null,
+  maxRank: null, minRatings: null, minDone: null, minImages: 1, tags: [], tagMode: 'any',
+});
+const MODE_META = {
+  classic: { eyebrow: 'Classic Mode', title: '经典模式' },
+  free: { eyebrow: 'Free Mode', title: '自由模式' },
+  hard: { eyebrow: 'Hard Challenge', title: '困难挑战' },
 };
-
-const FALLBACK_TITLES = [
-  "进击的巨人",
-  "鬼灭之刃",
-  "咒术回战",
-  "钢之炼金术师",
-  "命运石之门",
-];
-
+const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: GAME_CONFIG.leaderboard.timeZone,
+  month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+});
 const state = {
-  started: false,
-  pool: [],
-  current: null,
-  fetching: false,
-  answered: 0,
-  correct: 0,
-  locked: false,
-  quotaExceeded: false,
-  quotaMessage: "",
-  titleBank: new Set(FALLBACK_TITLES),
-  translationTitleBank: new Set(),
-  translationCache: new Map(),
-  recentAnsweredCopyrightTags: [],
-  filterConfig: { ...DEFAULT_FILTER_CONFIG },
-  favorites: [],
-  history: [],
-  historyIndex: -1,
-  poolTimerId: null,
-  nextQuestionTimerId: null,
-  poolGeneration: 0,
-  poolAbortController: null,
-  updatingFavorite: false,
-  browserDeepSeekApiKey: readStoredDeepSeekApiKey(),
-  serverDeepSeekApiKeySource: null,
-  deepSeekApiKeyValidationState: "unknown",
-  apiKeyValidationGeneration: 0,
+  catalog: null, engine: null, provider: null, mode: null,
+  launchToken: 0, imageToken: 0, hardValidationToken: 0,
+  hardValidationController: null,
+  leaderboardController: null, pendingResult: null, resultMode: null,
+  homeLeaderboardController: null, homeLeaderboardMode: 'classic', homeLeaderboardCache: new Map(),
+  gameGuideAutoShown: false,
+  freeFilter: { ...DEFAULT_FREE_FILTER, tags: [] },
+  draftTags: [], freeFilterInitial: false, freeEligible: [],
 };
+const ids = [
+  'startScreen', 'gameScreen', 'classicModeButton', 'freeModeButton', 'startButton', 'gameGuideButton', 'homeLeaderboardButton',
+  'backButton', 'gameModeLabel', 'gameTitle', 'freeFilterButton', 'finishHardButton',
+  'progressValue', 'progressLabel', 'primaryMetric', 'primaryMetricLabel',
+  'secondaryMetric', 'secondaryMetricLabel', 'timerStat', 'timerValue', 'poolStat',
+  'poolCount', 'timerTrack', 'timerBar', 'loadingLayer', 'loadingText', 'animeFrame',
+  'statusText', 'skipButton', 'options', 'feedback', 'hardApiModal', 'hardApiCloseButton',
+  'hardApiForm', 'deepSeekApiKeyInput', 'hardApiMessage', 'hardApiConfirmButton',
+  'homeLeaderboardModal', 'homeLeaderboardCloseButton', 'homeLeaderboardClassicTab',
+  'homeLeaderboardHardTab', 'homeLeaderboardDay', 'homeLeaderboardStatus', 'homeLeaderboardBody',
+  'gameGuideModal', 'gameGuideCloseButton',
+  'freeFilterModal', 'freeFilterCloseButton', 'freeFilterForm', 'freeTitleQuery',
+  'freeStartDate', 'freeEndDate', 'freeMinScore', 'freeMaxScore', 'freeMaxRank',
+  'freeMinRatings', 'freeMinDone', 'freeMinImages', 'freeTagSearch', 'freeTagResults',
+  'freeSelectedTags', 'freeMatchCount', 'freeFilterMessage', 'freeFilterResetButton',
+  'freeFilterStartButton', 'profileModal', 'profileForm', 'profileUsername',
+  'profileMessage', 'profileSkipButton', 'resultModal', 'resultTitle', 'resultLead',
+  'resultMainValue', 'resultMainLabel', 'resultCorrectValue', 'resultElapsedValue',
+  'leaderboardSection', 'leaderboardDay', 'leaderboardStatus', 'leaderboardBody',
+  'resultReviewSection', 'resultReviewSummary', 'resultReviewList',
+  'resultHomeButton', 'resultRefilterButton', 'resultReplayButton',
+];
+const els = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
+const missingIds = ids.filter((id) => !els[id]);
+if (missingIds.length) throw new Error(`页面缺少必要元素：${missingIds.join(', ')}`);
 
-const els = {
-  startScreen: document.querySelector("#startScreen"),
-  gameScreen: document.querySelector("#gameScreen"),
-  startButton: document.querySelector("#startButton"),
-  backButton: document.querySelector("#backButton"),
-  framePanel: document.querySelector(".framePanel"),
-  answeredCount: document.querySelector("#answeredCount"),
-  accuracyRate: document.querySelector("#accuracyRate"),
-  poolCount: document.querySelector("#poolCount"),
-  animeFrame: document.querySelector("#animeFrame"),
-  loadingLayer: document.querySelector("#loadingLayer"),
-  loadingText: document.querySelector("#loadingText"),
-  statusText: document.querySelector("#statusText"),
-  options: document.querySelector("#options"),
-  feedback: document.querySelector("#feedback"),
-  prevHistoryButton: document.querySelector("#prevHistoryButton"),
-  nextHistoryButton: document.querySelector("#nextHistoryButton"),
-  skipButton: document.querySelector("#skipButton"),
-  settingsButton: document.querySelector("#settingsButton"),
-  settingsModal: document.querySelector("#settingsModal"),
-  settingsCloseButton: document.querySelector("#settingsCloseButton"),
-  settingsForm: document.querySelector("#settingsForm"),
-  settingsResetButton: document.querySelector("#settingsResetButton"),
-  settingsSaveButton: document.querySelector("#settingsSaveButton"),
-  settingsSummary: document.querySelector("#settingsSummary"),
-  apiKeyForm: document.querySelector("#apiKeyForm"),
-  deepSeekApiKeyInput: document.querySelector("#deepSeekApiKeyInput"),
-  apiKeySaveButton: document.querySelector("#apiKeySaveButton"),
-  apiKeySummary: document.querySelector("#apiKeySummary"),
-  settingsEffectiveTags: document.querySelector("#settingsEffectiveTags"),
-  settingsMessage: document.querySelector("#settingsMessage"),
-  filterStartDate: document.querySelector("#filterStartDate"),
-  filterEndDate: document.querySelector("#filterEndDate"),
-  filterMinScore: document.querySelector("#filterMinScore"),
-  filterMaxScore: document.querySelector("#filterMaxScore"),
-  filterRating: document.querySelector("#filterRating"),
-  favoritesButton: document.querySelector("#favoritesButton"),
-  favoritesModal: document.querySelector("#favoritesModal"),
-  favoritesCloseButton: document.querySelector("#favoritesCloseButton"),
-  favoritesList: document.querySelector("#favoritesList"),
-  favoriteButton: document.querySelector("#favoriteButton"),
-};
+bindEvents();
+renderConfiguredCopy();
+showHome();
+maybeOpenGameGuide();
 
-start();
+function renderConfiguredCopy() {
+  const classicSummary = els.classicModeButton.querySelector('small');
+  const hardSummary = els.startButton.querySelector('small');
+  const classicIcon = els.classicModeButton.querySelector('.modeIcon');
+  if (classicIcon) classicIcon.textContent = String(LOCAL_COUNT);
+  if (classicSummary) {
+    classicSummary.textContent = `随机 ${LOCAL_COUNT} 部番剧 · 每题 ${GAME_CONFIG.questionSeconds} 秒 · 满分 ${LOCAL_MAX_SCORE}`;
+  }
+  if (hardSummary) {
+    hardSummary.textContent = `在线随机题源 · 不限时 · ${GAME_CONFIG.hard.minRankQuestions} 题后可结算`;
+  }
+  els.progressValue.textContent = `0 / ${LOCAL_COUNT}`;
+  els.timerValue.textContent = GAME_CONFIG.questionSeconds.toFixed(1);
+  els.poolCount.textContent = `0 / ${GAME_CONFIG.hard.batchSize}`;
+  els.resultCorrectValue.textContent = `0 / ${LOCAL_COUNT}`;
+}
 
-function start() {
-  els.startButton.addEventListener("click", startGame);
-  els.backButton.addEventListener("click", backToHome);
-  els.skipButton.addEventListener("click", skipQuestion);
-  els.settingsButton.addEventListener("click", openSettings);
-  els.settingsCloseButton.addEventListener("click", closeSettings);
-  els.settingsResetButton.addEventListener("click", resetSettingsForm);
-  els.settingsForm.addEventListener("submit", saveSettings);
-  els.settingsForm.addEventListener("input", handleSettingsInput);
-  els.apiKeyForm.addEventListener("submit", saveBrowserDeepSeekApiKey);
-  els.deepSeekApiKeyInput.addEventListener("input", handleBrowserDeepSeekApiKeyInput);
-  els.settingsModal.addEventListener("click", (event) => {
-    if (event.target === els.settingsModal) closeSettings();
+function bindEvents() {
+  els.classicModeButton.addEventListener('click', () => void beginClassic());
+  els.freeModeButton.addEventListener('click', () => void beginFreeEntry());
+  els.startButton.addEventListener('click', openHardModal);
+  els.homeLeaderboardButton.addEventListener('click', openHomeLeaderboard);
+  els.gameGuideButton.addEventListener('click', openGameGuide);
+  els.backButton.addEventListener('click', showHome);
+  els.skipButton.addEventListener('click', () => state.engine?.skip());
+  els.finishHardButton.addEventListener('click', finishHardGame);
+  els.freeFilterButton.addEventListener('click', restartFromFreeFilter);
+  els.hardApiCloseButton.addEventListener('click', closeHardModal);
+  els.hardApiForm.addEventListener('submit', validateAndBeginHard);
+  els.hardApiModal.addEventListener('click', (event) => {
+    if (event.target === els.hardApiModal) closeHardModal();
   });
-  els.favoritesButton.addEventListener("click", openFavorites);
-  els.favoritesCloseButton.addEventListener("click", closeFavorites);
-  els.favoritesModal.addEventListener("click", (event) => {
-    if (event.target === els.favoritesModal) closeFavorites();
+  els.homeLeaderboardCloseButton.addEventListener('click', closeHomeLeaderboard);
+  els.homeLeaderboardClassicTab.addEventListener('click', () => void selectHomeLeaderboardMode('classic'));
+  els.homeLeaderboardHardTab.addEventListener('click', () => void selectHomeLeaderboardMode('hard'));
+  els.homeLeaderboardModal.addEventListener('click', (event) => {
+    if (event.target === els.homeLeaderboardModal) closeHomeLeaderboard();
   });
-  els.favoriteButton.addEventListener("click", toggleFavorite);
-  els.prevHistoryButton.addEventListener("click", showPrevHistory);
-  els.nextHistoryButton.addEventListener("click", showNextHistory);
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      if (!els.settingsModal.classList.contains("hidden")) {
-        closeSettings();
-      }
-      if (!els.favoritesModal.classList.contains("hidden")) {
-        closeFavorites();
-      }
-      return;
+  els.gameGuideCloseButton.addEventListener('click', closeGameGuide);
+  els.gameGuideModal.addEventListener('click', (event) => {
+    if (event.target === els.gameGuideModal) closeGameGuide();
+  });
+
+  els.freeFilterCloseButton.addEventListener('click', closeFreeFilter);
+  els.freeFilterResetButton.addEventListener('click', resetFreeFilter);
+  els.freeFilterForm.addEventListener('input', updateFreeFilterPreview);
+  els.freeFilterForm.addEventListener('submit', startFilteredGame);
+  els.freeTagSearch.addEventListener('input', renderTagSearch);
+  els.freeTagResults.addEventListener('click', chooseTag);
+  els.freeSelectedTags.addEventListener('click', removeTag);
+  els.freeFilterModal.addEventListener('click', (event) => {
+    if (event.target === els.freeFilterModal) closeFreeFilter();
+  });
+  els.profileForm.addEventListener('submit', resolveProfile);
+  els.profileSkipButton.addEventListener('click', skipProfile);
+  els.resultHomeButton.addEventListener('click', showHome);
+  els.resultReplayButton.addEventListener('click', replayResultMode);
+  els.resultRefilterButton.addEventListener('click', () => void beginFreeEntry());
+  document.addEventListener('keydown', handleKeyboard);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      state.engine?.syncTimer();
+      if (state.mode === 'hard') void state.provider?.ensureFilled?.().catch(() => {});
     }
-    if (!state.current || state.locked) return;
-    const key = event.key;
-    if (key === " " || key === "Spacebar") {
+  });
+}
+
+function handleKeyboard(event) {
+  if (event.key === 'Escape') {
+    if (!els.hardApiModal.classList.contains('hidden')) closeHardModal();
+    else if (!els.gameGuideModal.classList.contains('hidden')) closeGameGuide();
+    else if (!els.homeLeaderboardModal.classList.contains('hidden')) closeHomeLeaderboard();
+    else if (!els.freeFilterModal.classList.contains('hidden')) closeFreeFilter();
+    return;
+  }
+  if (document.querySelector('.modal:not(.hidden)') || !state.engine) return;
+  if (event.key === ' ' || event.key === 'Spacebar') {
+    event.preventDefault();
+    state.engine.skip();
+    return;
+  }
+  const number = Number(event.key);
+  if (number >= 1 && number <= 4) {
+    const button = els.options.querySelectorAll('.optionButton')[number - 1];
+    if (button && !button.disabled) {
       event.preventDefault();
-      skipQuestion();
-      return;
-    }
-    const digit = Number(key);
-    if (digit >= 1 && digit <= 4) {
-      const optionButton = els.options.children[digit - 1];
-      if (optionButton && !optionButton.disabled) {
-        event.preventDefault();
-        optionButton.click();
-      }
-    }
-  });
-
-  const today = getLocalDateString();
-  els.filterStartDate.max = today;
-  els.filterEndDate.max = today;
-  els.deepSeekApiKeyInput.value = state.browserDeepSeekApiKey;
-  loadSettings();
-  void loadConfigStatus();
-  loadFavorites();
-  loadTranslationTitleBank();
-}
-
-function getLocalDateString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function loadSettings() {
-  try {
-    const stored = readLocalJson(FILTER_STORAGE_KEY, DEFAULT_FILTER_CONFIG);
-    state.filterConfig = normalizeFilterConfig(stored);
-    populateSettingsForm(state.filterConfig);
-    renderSettingsSummary();
-    renderEffectiveTags(buildFilterTags(state.filterConfig));
-  } catch (error) {
-    console.warn("加载筛选配置失败：", error);
-    state.filterConfig = { ...DEFAULT_FILTER_CONFIG };
-    populateSettingsForm(state.filterConfig);
-    els.settingsSummary.textContent = "浏览器筛选配置读取失败，当前使用 Safe 默认设置";
-    renderEffectiveTags(buildFilterTags(state.filterConfig));
-  }
-}
-
-async function loadConfigStatus() {
-  try {
-    const data = await fetchJson("/api/config-status");
-    const apiKey = data?.deepSeekApiKey;
-    state.serverDeepSeekApiKeySource = apiKey?.source || null;
-    if (apiKey?.source === "environment") {
-      els.apiKeySummary.dataset.state = "configured";
-      els.apiKeySummary.textContent = "已读取 Cloudflare Worker 环境 Secret DEEPSEEK_API_KEY，无需手动输入";
-      state.deepSeekApiKeyValidationState = "valid";
-      els.deepSeekApiKeyInput.disabled = true;
-      els.apiKeySaveButton.disabled = true;
-      return;
-    }
-    els.deepSeekApiKeyInput.disabled = false;
-    els.apiKeySaveButton.disabled = false;
-    if (state.browserDeepSeekApiKey) {
-      state.deepSeekApiKeyValidationState = "valid";
-      els.apiKeySummary.dataset.state = "configured";
-      els.apiKeySummary.textContent = "已使用当前标签页中检测通过的 API Key";
-      return;
-    }
-    renderMissingApiKeyStatus();
-  } catch (error) {
-    console.warn("读取 DeepSeek API Key 配置状态失败：", error);
-    if (state.browserDeepSeekApiKey) {
-      state.deepSeekApiKeyValidationState = "valid";
-      els.apiKeySummary.dataset.state = "configured";
-      els.apiKeySummary.textContent = "已使用当前标签页中检测通过的 API Key；无法读取环境变量状态";
-    } else {
-      els.apiKeySummary.dataset.state = "missing";
-      els.apiKeySummary.textContent = "可在此手动输入 Key；当前无法读取服务端配置状态";
+      button.click();
     }
   }
 }
 
-function saveBrowserDeepSeekApiKey(event) {
-  event.preventDefault();
-  void applyBrowserDeepSeekApiKey();
+function showHome() {
+  state.launchToken += 1;
+  stopGame();
+  abortLeaderboard();
+  abortHomeLeaderboard();
+  state.mode = null;
+  state.pendingResult = null;
+  closeAllModals();
+  els.gameScreen.classList.add('hidden');
+  els.startScreen.classList.remove('hidden');
+  document.body.classList.remove('gameActive', 'modalOpen');
 }
 
-function handleBrowserDeepSeekApiKeyInput() {
-  if (state.serverDeepSeekApiKeySource === "environment") return;
+function showGameShell(mode) {
+  closeAllModals();
+  state.mode = mode;
+  els.startScreen.classList.add('hidden');
+  els.gameScreen.classList.remove('hidden');
+  document.body.classList.add('gameActive');
+  const meta = MODE_META[mode];
+  els.gameModeLabel.textContent = meta.eyebrow;
+  els.gameTitle.textContent = meta.title;
+  els.freeFilterButton.classList.toggle('hidden', mode !== 'free');
+  els.finishHardButton.classList.toggle('hidden', mode !== 'hard');
+  els.timerStat.classList.toggle('hidden', mode === 'hard');
+  els.timerTrack.classList.toggle('hidden', mode === 'hard');
+  els.poolStat.classList.toggle('hidden', mode !== 'hard');
+  els.primaryMetricLabel.textContent = mode === 'hard' ? '正确率' : '得分';
+  els.secondaryMetricLabel.textContent = mode === 'hard' ? '答对题数' : '正确率';
+  els.progressLabel.textContent = mode === 'hard' ? '连续作答' : '进度';
+  resetQuestionDisplay();
+  updateStats(emptySnapshot(mode));
+}
 
-  state.apiKeyValidationGeneration += 1;
-  const apiKey = els.deepSeekApiKeyInput.value.trim();
-  if (apiKey && apiKey === state.browserDeepSeekApiKey) {
-    state.deepSeekApiKeyValidationState = "valid";
-    els.apiKeySummary.dataset.state = "configured";
-    els.apiKeySummary.textContent = "当前 API Key 已检测通过并应用";
+function stopGame() {
+  state.imageToken += 1;
+  state.engine?.stop();
+  state.provider?.stop?.();
+  state.engine = null;
+  state.provider = null;
+  els.animeFrame.onload = null;
+  els.animeFrame.onerror = null;
+}
+
+function closeAllModals() {
+  for (const modal of document.querySelectorAll('.modal')) modal.classList.add('hidden');
+  document.body.classList.remove('modalOpen');
+}
+
+function openModal(element, focusTarget) {
+  element.classList.remove('hidden');
+  document.body.classList.add('modalOpen');
+  window.setTimeout(() => focusTarget?.focus(), 0);
+}
+
+function closeModal(element) {
+  element.classList.add('hidden');
+  if (!document.querySelector('.modal:not(.hidden)')) document.body.classList.remove('modalOpen');
+}
+function maybeOpenGameGuide() {
+  if (state.gameGuideAutoShown) return;
+  let alreadySeen = false;
+  try {
+    alreadySeen = localStorage.getItem(GAME_GUIDE_STORAGE) === '1';
+  } catch {
+    // Storage may be unavailable in privacy mode; the in-memory flag still prevents repeats.
+  }
+  if (alreadySeen) return;
+  state.gameGuideAutoShown = true;
+  try {
+    localStorage.setItem(GAME_GUIDE_STORAGE, '1');
+  } catch {
+    // The guide can still be used without persistent storage.
+  }
+  openGameGuide();
+}
+
+function openGameGuide() {
+  openModal(els.gameGuideModal, els.gameGuideCloseButton);
+}
+
+function closeGameGuide() {
+  closeModal(els.gameGuideModal);
+  if (!els.startScreen.classList.contains('hidden')) els.gameGuideButton.focus();
+}
+
+
+
+function openHomeLeaderboard() {
+  state.homeLeaderboardCache.clear();
+  openModal(els.homeLeaderboardModal, els.homeLeaderboardClassicTab);
+  void selectHomeLeaderboardMode('classic');
+}
+
+function closeHomeLeaderboard() {
+  abortHomeLeaderboard();
+  closeModal(els.homeLeaderboardModal);
+  els.homeLeaderboardButton.focus();
+}
+
+async function selectHomeLeaderboardMode(mode) {
+  if (mode !== 'classic' && mode !== 'hard') return;
+  state.homeLeaderboardMode = mode;
+  for (const [button, buttonMode] of [
+    [els.homeLeaderboardClassicTab, 'classic'],
+    [els.homeLeaderboardHardTab, 'hard'],
+  ]) {
+    const active = buttonMode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  }
+
+  abortHomeLeaderboard();
+  els.homeLeaderboardBody.replaceChildren();
+  els.homeLeaderboardDay.textContent = '';
+  setFormMessage(els.homeLeaderboardStatus, '正在载入今日完整榜单…', 'loading');
+  let requestController = null;
+  try {
+    let data = state.homeLeaderboardCache.get(mode);
+    if (!data) {
+      requestController = new AbortController();
+      state.homeLeaderboardController = requestController;
+      data = await getLeaderboard(mode, requestController.signal);
+      state.homeLeaderboardCache.set(mode, data);
+    }
+    if (state.homeLeaderboardMode !== mode || els.homeLeaderboardModal.classList.contains('hidden')) return;
+    els.homeLeaderboardDay.textContent = data.dayKey ? `${data.dayKey}（北京时间）` : '';
+    renderLeaderboardRows(els.homeLeaderboardBody, data.entries, mode);
+    setFormMessage(els.homeLeaderboardStatus, `共 ${data.entries.length} 位上榜用户`, 'success');
+  } catch (error) {
+    if (error.name !== 'AbortError' && state.homeLeaderboardMode === mode) {
+      setFormMessage(els.homeLeaderboardStatus, error.message, 'error');
+    }
+  } finally {
+    if (state.homeLeaderboardController === requestController) state.homeLeaderboardController = null;
+  }
+}
+
+async function ensureCatalog() {
+  if (!state.catalog) state.catalog = await loadCatalog();
+  return state.catalog;
+}
+
+async function beginClassic() {
+  const token = ++state.launchToken;
+  stopGame();
+  showGameShell('classic');
+  setPreparing('正在载入精简题库…');
+  try {
+    const catalog = await ensureCatalog();
+    if (token !== state.launchToken || state.mode !== 'classic') return;
+    startLocalEngine('classic', catalog, filterAnime(catalog, {}));
+  } catch (error) {
+    if (token === state.launchToken) renderEngineError(error, () => void beginClassic());
+  }
+}
+
+async function beginFreeEntry() {
+  const token = ++state.launchToken;
+  stopGame();
+  showGameShell('free');
+  state.freeFilterInitial = true;
+  openFreeFilter(true);
+  try {
+    await ensureCatalog();
+    if (token !== state.launchToken || state.mode !== 'free') return;
+    updateFreeFilterPreview();
+    renderTagSearch();
+  } catch (error) {
+    if (token === state.launchToken) {
+      els.freeMatchCount.textContent = '题库载入失败';
+      setFormMessage(els.freeFilterMessage, error.message, 'error');
+    }
+  }
+}
+
+async function startLocalEngine(mode, catalog, eligible) {
+  const token = state.launchToken;
+  stopGame();
+  resetQuestionDisplay();
+  let provider;
+  try {
+    provider = createLocalQuestionProvider(
+      catalog,
+      eligible,
+      LOCAL_COUNT,
+      GAME_CONFIG.localPreloadCount,
+    );
+  } catch (error) {
+    renderEngineError(error, () => {
+      state.launchToken += 1;
+      void startLocalEngine(mode, catalog, eligible);
+    });
     return;
   }
 
-  state.deepSeekApiKeyValidationState = "unknown";
-  delete els.apiKeySummary.dataset.state;
-  els.apiKeySummary.textContent = apiKey
-    ? "API Key 尚未检测，请点击“应用并检测”"
-    : "输入已清空，点击“应用并检测”后移除当前 Key";
+  state.provider = provider;
+  setPreparing(`正在预加载前 ${provider.preloadCount} 道题截图…`);
+  try {
+    await provider.prepare();
+    if (token !== state.launchToken || state.mode !== mode || state.provider !== provider) {
+      provider.stop();
+      return;
+    }
+    const engine = createEngine({ mode, provider, questionLimit: LOCAL_COUNT, timed: true });
+    state.engine = engine;
+    await engine.start();
+  } catch (error) {
+    provider.stop();
+    if (state.provider === provider) state.provider = null;
+    if (token !== state.launchToken || state.mode !== mode || error.name === 'AbortError') return;
+    renderEngineError(error, () => {
+      state.launchToken += 1;
+      void startLocalEngine(mode, catalog, eligible);
+    });
+  }
 }
 
-async function applyBrowserDeepSeekApiKey() {
-  if (state.serverDeepSeekApiKeySource === "environment") return true;
+function openHardModal() {
+  state.hardValidationToken += 1;
+  els.deepSeekApiKeyInput.value = readHardKey();
+  els.deepSeekApiKeyInput.disabled = false;
+  els.hardApiConfirmButton.disabled = false;
+  setFormMessage(els.hardApiMessage, '需验证模型权限，余额须大于 ¥1。', '');
+  openModal(els.hardApiModal, els.deepSeekApiKeyInput);
+}
 
+function closeHardModal() {
+  state.hardValidationToken += 1;
+  state.hardValidationController?.abort();
+  state.hardValidationController = null;
+  closeModal(els.hardApiModal);
+  els.startButton.focus();
+}
+
+async function validateAndBeginHard(event) {
+  event.preventDefault();
   const apiKey = els.deepSeekApiKeyInput.value.trim();
   if (!apiKey) {
-    state.browserDeepSeekApiKey = "";
-    state.deepSeekApiKeyValidationState = "empty";
-    storeDeepSeekApiKey("");
-    renderMissingApiKeyStatus("已移除页面输入的 Key。");
-    return true;
+    setFormMessage(els.hardApiMessage, 'API Key 为必填项。', 'error');
+    els.deepSeekApiKeyInput.focus();
+    return;
   }
-  if (
-    state.deepSeekApiKeyValidationState === "valid"
-    && apiKey === state.browserDeepSeekApiKey
-  ) {
-    return true;
-  }
-
-  const validationGeneration = ++state.apiKeyValidationGeneration;
-  state.deepSeekApiKeyValidationState = "checking";
+  const validationToken = ++state.hardValidationToken;
   els.deepSeekApiKeyInput.disabled = true;
-  els.apiKeySaveButton.disabled = true;
-  els.apiKeySummary.dataset.state = "checking";
-  els.apiKeySummary.textContent = "正在检测 DeepSeek API Key...";
-
+  els.hardApiConfirmButton.disabled = true;
+  setFormMessage(els.hardApiMessage, '正在校验模型权限与人民币余额…', 'loading');
   try {
-    const data = await requestDeepSeekApiKeyValidation(apiKey);
-    if (
-      validationGeneration !== state.apiKeyValidationGeneration
-      || els.deepSeekApiKeyInput.value.trim() !== apiKey
-    ) {
-      return false;
+    const data = await validateHardKey(apiKey);
+    if (validationToken !== state.hardValidationToken) return;
+    const balance = Number(data?.balance);
+    if (data?.valid !== true || !Number.isFinite(balance) || balance <= 1) {
+      throw new Error(data?.message || '人民币余额必须严格大于 1 元。');
     }
-    if (!data?.valid) {
-      state.browserDeepSeekApiKey = "";
-      state.deepSeekApiKeyValidationState = "invalid";
-      storeDeepSeekApiKey("");
-      els.apiKeySummary.dataset.state = "missing";
-      els.apiKeySummary.textContent = data?.message || "API Key 不可用";
-      return false;
-    }
-    state.browserDeepSeekApiKey = apiKey;
-    state.deepSeekApiKeyValidationState = "valid";
-    storeDeepSeekApiKey(apiKey);
-    els.apiKeySummary.dataset.state = "configured";
-    els.apiKeySummary.textContent = `${data.message}；已应用到当前标签页`;
-    return true;
+    writeHardKey(apiKey);
+    closeModal(els.hardApiModal);
+    await beginHard(apiKey);
   } catch (error) {
-    if (validationGeneration !== state.apiKeyValidationGeneration) return false;
-    state.browserDeepSeekApiKey = "";
-    state.deepSeekApiKeyValidationState = "error";
-    storeDeepSeekApiKey("");
-    els.apiKeySummary.dataset.state = "missing";
-    els.apiKeySummary.textContent = `检测失败：${error.message}`;
-    return false;
+    if (validationToken !== state.hardValidationToken) return;
+    setFormMessage(els.hardApiMessage, error.message, 'error');
   } finally {
-    if (validationGeneration === state.apiKeyValidationGeneration) {
+    if (validationToken === state.hardValidationToken) {
       els.deepSeekApiKeyInput.disabled = false;
-      els.apiKeySaveButton.disabled = false;
+      els.hardApiConfirmButton.disabled = false;
     }
   }
 }
 
-async function requestDeepSeekApiKeyValidation(apiKey) {
+async function validateHardKey(apiKey) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), API_KEY_VALIDATION_TIMEOUT_MS);
+  state.hardValidationController = controller;
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch("/api/deepseek/validate", {
-      method: "POST",
+    const response = await fetch('/api/deepseek/validate', {
+      method: 'POST',
       signal: controller.signal,
-      headers: {
-        "X-DeepSeek-Api-Key": apiKey,
-      },
+      headers: { 'X-DeepSeek-Api-Key': apiKey, Accept: 'application/json' },
     });
     const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new Error(data?.error || data?.message || `HTTP ${response.status}`);
-    }
+    if (!response.ok) throw new Error(data?.error || data?.message || `校验失败（HTTP ${response.status}）`);
     return data;
   } catch (error) {
-    if (error.name === "AbortError") {
-      throw new Error("检测超时，请检查网络后重试");
-    }
+    if (error.name === 'AbortError') throw new Error('校验超时，请检查网络后重试。');
     throw error;
   } finally {
     clearTimeout(timeout);
+    if (state.hardValidationController === controller) state.hardValidationController = null;
   }
 }
 
-function renderMissingApiKeyStatus(prefix = "") {
-  els.apiKeySummary.dataset.state = "missing";
-  els.apiKeySummary.textContent = `${prefix}${prefix ? " " : ""}可设置 Worker Secret DEEPSEEK_API_KEY；网页访问者也可在此输入`;
-}
-
-function readStoredDeepSeekApiKey() {
+async function beginHard(apiKey) {
+  const token = ++state.launchToken;
+  stopGame();
+  showGameShell('hard');
+  setPreparing('正在载入精简标题库…');
   try {
-    return sessionStorage.getItem(DEEPSEEK_SESSION_STORAGE_KEY)?.trim() || "";
-  } catch {
-    return "";
-  }
-}
-
-function storeDeepSeekApiKey(apiKey) {
-  try {
-    if (apiKey) {
-      sessionStorage.setItem(DEEPSEEK_SESSION_STORAGE_KEY, apiKey);
-    } else {
-      sessionStorage.removeItem(DEEPSEEK_SESSION_STORAGE_KEY);
-    }
-  } catch {
-    console.warn("浏览器不允许使用会话存储，页面输入的 Key 仅在本次打开期间有效");
-  }
-}
-
-function readLocalJson(key, fallback) {
-  try {
-    const text = localStorage.getItem(key);
-    return text ? JSON.parse(text) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeLocalJson(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-    return true;
-  } catch (error) {
-    console.warn("浏览器本地存储写入失败：", error);
-    return false;
-  }
-}
-
-function loadTranslationTitleBank() {
-  state.translationCache.clear();
-  state.translationTitleBank.clear();
-  const stored = readLocalJson(TRANSLATION_STORAGE_KEY, {});
-  const entries = Array.isArray(stored?.entries) ? stored.entries : [];
-  for (const entry of entries) {
-    const key = typeof entry?.key === "string" ? entry.key.trim() : "";
-    const title = typeof entry?.title === "string" ? entry.title.trim() : "";
-    if (!key || key.length > 1000 || !title || title.length > 200) continue;
-    state.translationCache.set(key, title);
-    state.translationTitleBank.add(title);
-  }
-  trimTranslationCache();
-  console.log(`[题目选项] 已从当前浏览器加载 ${state.translationCache.size} 个翻译缓存标题`);
-}
-
-function storeTranslation(cacheKey, title) {
-  if (!cacheKey || !title) return;
-  state.translationCache.delete(cacheKey);
-  state.translationCache.set(cacheKey, title);
-  state.translationTitleBank.add(title);
-  trimTranslationCache();
-  writeLocalJson(TRANSLATION_STORAGE_KEY, {
-    version: 1,
-    entries: [...state.translationCache].map(([key, value]) => ({ key, title: value })),
-  });
-}
-
-function trimTranslationCache() {
-  while (state.translationCache.size > MAX_TRANSLATION_CACHE_SIZE) {
-    state.translationCache.delete(state.translationCache.keys().next().value);
-  }
-}
-
-function openSettings() {
-  populateSettingsForm(state.filterConfig);
-  setSettingsMessage("");
-  els.settingsModal.classList.remove("hidden");
-  els.filterStartDate.focus();
-}
-
-function closeSettings() {
-  els.settingsModal.classList.add("hidden");
-  els.settingsButton.focus();
-}
-
-function resetSettingsForm() {
-  populateSettingsForm(DEFAULT_FILTER_CONFIG);
-  setSettingsMessage("已恢复表单默认值，点击“保存设置”后生效。");
-}
-
-function handleSettingsInput() {
-  setSettingsMessage("");
-  renderEffectiveTags(buildFilterTags(readSettingsForm()));
-}
-
-async function saveSettings(event) {
-  event.preventDefault();
-  if (!els.settingsForm.reportValidity()) return;
-
-  const config = readSettingsForm();
-  if (config.startDate && config.endDate && config.startDate > config.endDate) {
-    setSettingsMessage("起始日期不能晚于结束日期。", "error");
-    return;
-  }
-  if (config.minScore !== null && config.maxScore !== null && config.minScore > config.maxScore) {
-    setSettingsMessage("最低热度不能高于最高热度。", "error");
-    return;
-  }
-
-  els.settingsSaveButton.disabled = true;
-  setSettingsMessage("正在保存到当前浏览器...");
-  try {
-    state.filterConfig = normalizeFilterConfig(config);
-    if (!writeLocalJson(FILTER_STORAGE_KEY, state.filterConfig)) {
-      throw new Error("浏览器禁止或无法写入本地存储");
-    }
-    populateSettingsForm(state.filterConfig);
-    renderSettingsSummary();
-    renderEffectiveTags(buildFilterTags(state.filterConfig));
-    state.pool = [];
-    state.poolGeneration += 1;
-    abortPoolRequest();
-    if (state.started) void fillPoolTick();
-    setSettingsMessage("设置已保存到当前浏览器，新的随机题目将使用此筛选。", "success");
-  } catch (error) {
-    setSettingsMessage(`保存失败：${error.message}`, "error");
-  } finally {
-    els.settingsSaveButton.disabled = false;
-  }
-}
-
-function loadFavorites() {
-  state.favorites = normalizeStoredFavorites(readLocalJson(FAVORITES_STORAGE_KEY, []));
-  console.log(`[收藏] 已从当前浏览器加载 ${state.favorites.length} 个收藏动漫`);
-}
-
-function normalizeStoredFavorites(data) {
-  if (!Array.isArray(data)) return [];
-  const normalized = [];
-  const seenTitles = new Set();
-  for (const item of data) {
-    const title = typeof item?.title === "string" ? item.title.trim() : "";
-    const tags = [...new Set((Array.isArray(item?.tags) ? item.tags : [])
-      .map((tag) => typeof tag === "string" ? tag.trim() : "")
-      .filter((tag) => tag && tag.length <= 128 && /^[a-zA-Z0-9_:\-.]+$/.test(tag)))]
-      .slice(0, MAX_EXCLUDED_COPYRIGHT_TAGS);
-    if (!title || title.length > 200 || tags.length === 0 || seenTitles.has(title)) continue;
-    seenTitles.add(title);
-    normalized.push({
-      title,
-      tags,
-      createdAt: typeof item.createdAt === "string" ? item.createdAt : "",
-    });
-    if (normalized.length >= MAX_FAVORITES) break;
-  }
-  return normalized;
-}
-
-function persistFavorites() {
-  if (!writeLocalJson(FAVORITES_STORAGE_KEY, state.favorites)) {
-    throw new Error("浏览器禁止或无法写入本地存储");
-  }
-}
-
-function openFavorites() {
-  renderFavoritesList();
-  els.favoritesModal.classList.remove("hidden");
-  els.favoritesCloseButton.focus();
-}
-
-function closeFavorites() {
-  els.favoritesModal.classList.add("hidden");
-  els.favoritesButton.focus();
-}
-
-function renderFavoritesList() {
-  if (state.favorites.length === 0) {
-    els.favoritesList.innerHTML = '<p class="favoritesEmpty">暂无收藏的动漫</p>';
-    return;
-  }
-
-  els.favoritesList.innerHTML = "";
-  for (const item of state.favorites) {
-    const div = document.createElement("div");
-    div.className = "favoriteItem";
-
-    const span = document.createElement("span");
-    span.className = "favoriteItemTitle";
-    span.textContent = item.title;
-    span.title = item.title;
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "favoriteItemDelete";
-    btn.textContent = "删除";
-    btn.addEventListener("click", () => removeFavorite(item.title));
-
-    div.appendChild(span);
-    div.appendChild(btn);
-    els.favoritesList.appendChild(div);
-  }
-}
-
-function getFavoriteTarget() {
-  if (state.historyIndex !== -1) {
-    return state.history[state.historyIndex] || null;
-  }
-  return state.current;
-}
-
-function isFavorited(item = getFavoriteTarget()) {
-  if (!item?.title) return false;
-  return state.favorites.some((favorite) => favorite.title === item.title);
-}
-
-function updateFavoriteButton() {
-  const target = getFavoriteTarget();
-  const favorited = isFavorited(target);
-  const unavailable = !target?.title || getCopyrightTags(target).length === 0;
-  els.favoriteButton.classList.toggle("hidden", unavailable);
-  els.favoriteButton.disabled = unavailable || state.updatingFavorite;
-  els.favoriteButton.setAttribute("aria-label", favorited ? "取消收藏" : "收藏此动漫");
-  if (favorited) {
-    els.favoriteButton.classList.add("favorited");
-    els.favoriteButton.title = "取消收藏";
-  } else {
-    els.favoriteButton.classList.remove("favorited");
-    els.favoriteButton.title = "收藏此动漫";
-  }
-}
-
-async function toggleFavorite() {
-  const target = getFavoriteTarget();
-  if (!target?.title || getCopyrightTags(target).length === 0 || state.updatingFavorite) return;
-
-  state.updatingFavorite = true;
-  updateFavoriteButton();
-  try {
-    if (isFavorited(target)) {
-      await removeFavorite(target.title);
-    } else {
-      await addFavorite(target);
-    }
-  } finally {
-    state.updatingFavorite = false;
-    updateFavoriteButton();
-  }
-}
-
-async function addFavorite(item) {
-  const tags = getCopyrightTags(item);
-  if (!item.title || tags.length === 0) {
-    console.warn("[收藏] 无法收藏：缺少标题或版权标签");
-    return;
-  }
-
-  try {
-    if (state.favorites.length >= MAX_FAVORITES) {
-      throw new Error(`收藏数量已达到 ${MAX_FAVORITES} 条上限`);
-    }
-    state.favorites = normalizeStoredFavorites([...state.favorites, {
-      title: item.title,
-      tags,
-      createdAt: new Date().toISOString(),
-    }]);
-    persistFavorites();
-    const addedTags = new Set(tags);
-    state.pool = state.pool.filter((poolItem) => !hasCopyrightOverlap(poolItem, addedTags));
-    console.log(`[收藏] 已添加收藏: ${item.title}`);
-    if (state.started) void fillPoolTick();
-  } catch (error) {
-    console.warn("[收藏] 添加收藏失败:", error.message);
-  }
-}
-
-async function removeFavorite(title) {
-  try {
-    state.favorites = state.favorites.filter((favorite) => favorite.title !== title);
-    persistFavorites();
-    console.log(`[收藏] 已移除收藏: ${title}`);
-    renderFavoritesList();
-  } catch (error) {
-    console.warn("[收藏] 删除收藏失败:", error.message);
-  }
-}
-
-function readSettingsForm() {
-  return {
-    startDate: els.filterStartDate.value,
-    endDate: els.filterEndDate.value,
-    minScore: els.filterMinScore.value === "" ? null : Number(els.filterMinScore.value),
-    maxScore: els.filterMaxScore.value === "" ? null : Number(els.filterMaxScore.value),
-    rating: els.filterRating.value,
-  };
-}
-
-function normalizeFilterConfig(config = {}) {
-  const normalizeDate = (value) => {
-    const text = typeof value === "string" ? value.trim() : "";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return "";
-    const parsed = new Date(`${text}T00:00:00Z`);
-    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) return "";
-    return text >= "2000-01-01" && text <= getLocalDateString() ? text : "";
-  };
-  const normalizeScore = (value) => (
-    Number.isInteger(value) && value >= -1000 && value <= 100000 ? value : null
-  );
-  let startDate = normalizeDate(config.startDate);
-  let endDate = normalizeDate(config.endDate);
-  let minScore = normalizeScore(config.minScore);
-  let maxScore = normalizeScore(config.maxScore);
-  if (startDate && endDate && startDate > endDate) {
-    startDate = "";
-    endDate = "";
-  }
-  if (minScore !== null && maxScore !== null && minScore > maxScore) {
-    minScore = null;
-    maxScore = null;
-  }
-  return {
-    startDate,
-    endDate,
-    minScore,
-    maxScore,
-    rating: ["", "s", "q", "e"].includes(config.rating) ? config.rating : "s",
-  };
-}
-
-function populateSettingsForm(config) {
-  const normalized = normalizeFilterConfig(config);
-  els.filterStartDate.value = normalized.startDate;
-  els.filterEndDate.value = normalized.endDate;
-  els.filterMinScore.value = normalized.minScore ?? "";
-  els.filterMaxScore.value = normalized.maxScore ?? "";
-  els.filterRating.value = normalized.rating;
-  renderEffectiveTags(buildFilterTags(normalized));
-}
-
-function buildFilterTags(config) {
-  const tags = ["animated"];
-  if (config.startDate && config.endDate) {
-    tags.push(`date:${config.startDate}..${config.endDate}`);
-  } else if (config.startDate) {
-    tags.push(`date:>=${config.startDate}`);
-  } else if (config.endDate) {
-    tags.push(`date:<=${config.endDate}`);
-  }
-  if (config.minScore !== null && config.maxScore !== null) {
-    tags.push(`score:${config.minScore}..${config.maxScore}`);
-  } else if (config.minScore !== null) {
-    tags.push(`score:>=${config.minScore}`);
-  } else if (config.maxScore !== null) {
-    tags.push(`score:<=${config.maxScore}`);
-  }
-  if (config.rating) tags.push(`rating:${config.rating}`);
-  tags.push("order:random");
-  return tags.join(" ");
-}
-
-function renderEffectiveTags(tags) {
-  els.settingsEffectiveTags.textContent = `实际查询标签：${tags}`;
-}
-
-function renderSettingsSummary() {
-  const config = state.filterConfig;
-  const ratingLabels = {
-    "": "全部分级",
-    s: "Safe",
-    q: "Questionable",
-    e: "Explicit",
-  };
-  const dateText = config.startDate || config.endDate
-    ? `${config.startDate || "不限"} 至 ${config.endDate || "今天"}`
-    : "时间不限";
-  const scoreText = config.minScore !== null || config.maxScore !== null
-    ? `热度 ${config.minScore ?? "不限"}–${config.maxScore ?? "不限"}`
-    : "热度不限";
-  els.settingsSummary.textContent = `${ratingLabels[config.rating]} · ${dateText} · ${scoreText}`;
-}
-
-function setSettingsMessage(message, stateName = "") {
-  els.settingsMessage.textContent = message;
-  if (stateName) {
-    els.settingsMessage.dataset.state = stateName;
-  } else {
-    delete els.settingsMessage.dataset.state;
-  }
-}
-
-function backToHome() {
-  state.started = false;
-  stopGameTimers();
-  state.poolGeneration += 1;
-  abortPoolRequest();
-  state.current = null;
-  state.pool = [];
-  state.locked = false;
-  state.answered = 0;
-  state.correct = 0;
-  state.history = [];
-  state.historyIndex = -1;
-  state.updatingFavorite = false;
-  els.gameScreen.classList.add("hidden");
-  els.startScreen.classList.remove("hidden");
-}
-
-function startGame() {
-  if (state.started) return;
-  const apiKey = els.deepSeekApiKeyInput.value.trim();
-  if (
-    state.serverDeepSeekApiKeySource !== "environment"
-    && apiKey
-    && (
-      state.deepSeekApiKeyValidationState !== "valid"
-      || apiKey !== state.browserDeepSeekApiKey
-    )
-  ) {
-    els.apiKeySummary.dataset.state = "missing";
-    els.apiKeySummary.textContent = "请先点击“应用并检测”，确认 API Key 可用";
-    els.apiKeySaveButton.focus();
-    return;
-  }
-  state.started = true;
-  state.quotaExceeded = false;
-  state.quotaMessage = "";
-  state.poolGeneration += 1;
-  state.history = [];
-  state.historyIndex = -1;
-  els.startScreen.classList.add("hidden");
-  els.gameScreen.classList.remove("hidden");
-  stopGameTimers();
-  state.poolTimerId = setInterval(fillPoolTick, FETCH_INTERVAL_MS);
-  void fillPoolTick();
-  updateUi();
-  updateHistoryButtons();
-}
-
-function stopGameTimers() {
-  if (state.poolTimerId !== null) {
-    clearInterval(state.poolTimerId);
-    state.poolTimerId = null;
-  }
-  if (state.nextQuestionTimerId !== null) {
-    clearTimeout(state.nextQuestionTimerId);
-    state.nextQuestionTimerId = null;
-  }
-}
-
-function abortPoolRequest() {
-  state.poolAbortController?.abort();
-  state.poolAbortController = null;
-}
-
-async function fillPoolTick() {
-  if (!state.started || state.fetching || state.pool.length >= MAX_POOL_SIZE || state.quotaExceeded) return;
-
-  const generation = state.poolGeneration;
-  const requestController = new AbortController();
-  state.poolAbortController = requestController;
-  state.fetching = true;
-  try {
-    const item = await fetchFrameQuestion(requestController.signal);
-    if (!state.started || generation !== state.poolGeneration) return;
-    await localizeFrameTitle(item, requestController.signal);
-    if (!state.started || generation !== state.poolGeneration) return;
-    if (item && !hasDuplicate(item)) {
-      state.pool.push(item);
-      rememberTitle(item.title);
-      if (!state.current && state.pool.length >= MIN_READY_SIZE) {
-        nextQuestion();
-      }
-    }
-  } catch (error) {
-    if (!state.started || generation !== state.poolGeneration) return;
-    console.warn("本次补充题库失败：", error);
-    if (error.code === "QUOTA_EXCEEDED") {
-      state.quotaExceeded = true;
-      state.quotaMessage = error.message;
-    }
-  } finally {
-    if (state.poolAbortController === requestController) {
-      state.poolAbortController = null;
-    }
-    state.fetching = false;
-    updateUi();
-  }
-}
-
-function rememberTitle(title) {
-  if (!title) return;
-  if (state.titleBank.has(title)) state.titleBank.delete(title);
-  state.titleBank.add(title);
-  while (state.titleBank.size > MAX_TITLE_BANK_SIZE) {
-    state.titleBank.delete(state.titleBank.values().next().value);
-  }
-}
-
-async function fetchJson(url, externalSignal = null, headers = undefined) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  const handleExternalAbort = () => controller.abort();
-  if (externalSignal?.aborted) {
-    controller.abort();
-  } else {
-    externalSignal?.addEventListener("abort", handleExternalAbort, { once: true });
-  }
-
-  try {
-    const response = await fetch(url, { signal: controller.signal, headers });
-    if (!response.ok) {
-      const data = await response.json().catch(() => null);
-      const err = new Error(data?.error || `HTTP ${response.status}`);
-      err.code = data?.code || null;
-      throw err;
-    }
-    return response.json();
-  } finally {
-    clearTimeout(timeout);
-    externalSignal?.removeEventListener("abort", handleExternalAbort);
-  }
-}
-
-function buildDeepSeekRequestHeaders() {
-  if (
-    state.serverDeepSeekApiKeySource === "environment"
-    || !state.browserDeepSeekApiKey
-    || state.deepSeekApiKeyValidationState !== "valid"
-  ) {
-    return undefined;
-  }
-  return {
-    "X-DeepSeek-Api-Key": state.browserDeepSeekApiKey,
-  };
-}
-
-function buildFrameSourceRequestUrl() {
-  const params = new URLSearchParams();
-  const config = normalizeFilterConfig(state.filterConfig);
-  if (config.startDate) params.set("startDate", config.startDate);
-  if (config.endDate) params.set("endDate", config.endDate);
-  if (config.minScore !== null) params.set("minScore", String(config.minScore));
-  if (config.maxScore !== null) params.set("maxScore", String(config.maxScore));
-  params.set("rating", config.rating);
-  for (const tag of getExcludedCopyrightTags()) {
-    params.append("excludeCopyright", tag);
-  }
-  const query = params.toString();
-  return query ? `/api/frame-source?${query}` : "/api/frame-source";
-}
-
-async function fetchFrameQuestion(externalSignal) {
-  const source = await fetchJson(buildFrameSourceRequestUrl(), externalSignal);
-  const traceData = await searchTraceMoeFromBrowser(source?.traceInputUrl, externalSignal);
-  const traceResult = selectBestTraceResult(traceData);
-  if (!traceResult?.image) {
-    throw new Error("trace.moe 未返回可展示的识别结果");
-  }
-  return postJson("/api/frame-resolve", { source, traceResult }, externalSignal);
-}
-
-async function searchTraceMoeFromBrowser(mediaUrl, externalSignal) {
-  if (!isAllowedTraceInputUrl(mediaUrl)) {
-    throw new Error("题目来源地址无效，已停止识图请求");
-  }
-  const traceUrl = new URL(TRACE_MOE_API_URL);
-  traceUrl.searchParams.set("anilistInfo", "");
-  traceUrl.searchParams.set("url", mediaUrl);
-  let lastError = null;
-
-  for (let attempt = 0; attempt < TRACE_SEARCH_RETRY_LIMIT; attempt += 1) {
-    try {
-      const response = await fetchWithBrowserTimeout(
-        traceUrl,
-        { method: "GET", mode: "cors", credentials: "omit" },
-        TRACE_SEARCH_TIMEOUT_MS,
-        externalSignal,
-      );
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        const error = new Error(`trace.moe HTTP ${response.status}${body ? `: ${body.slice(0, 300)}` : ""}`);
-        error.status = response.status;
-        error.body = body;
-        if (response.status === 402) await classifyBrowserTraceLimit(error, externalSignal);
-        throw error;
-      }
-      return response.json();
-    } catch (error) {
-      if (externalSignal?.aborted || error.name === "AbortError") throw error;
-      lastError = error;
-      if (error.code === "QUOTA_EXCEEDED") throw error;
-      const retryable = error.code === "TRACE_CONCURRENCY"
-        || !error.status
-        || error.status === 429
-        || error.status >= 500;
-      if (!retryable) throw error;
-      if (error.status >= 500) traceUrl.searchParams.delete("anilistInfo");
-      if (attempt < TRACE_SEARCH_RETRY_LIMIT - 1) {
-        await delay(1000 * (2 ** attempt) + Math.round(Math.random() * 300));
-      }
-    }
-  }
-
-  const error = new Error(
-    lastError instanceof TypeError
-      ? "浏览器无法直连 trace.moe，请检查网络或其 CORS 服务状态"
-      : `trace.moe 网络连接失败：${lastError?.message || "未知错误"}`,
-  );
-  error.code = "TRACE_NETWORK_ERROR";
-  throw error;
-}
-
-async function classifyBrowserTraceLimit(error, externalSignal) {
-  if (/concurrency/i.test(error.body || error.message || "")) {
-    error.code = "TRACE_CONCURRENCY";
-    error.message = "trace.moe 并发限制繁忙，稍后重试";
-    return;
-  }
-  try {
-    const response = await fetchWithBrowserTimeout(
-      TRACE_MOE_ACCOUNT_URL,
-      { method: "GET", mode: "cors", credentials: "omit" },
-      10000,
-      externalSignal,
-    );
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const account = await response.json();
-    const quota = Number(account?.quota);
-    const quotaUsed = Number(account?.quotaUsed);
-    const usage = Number.isFinite(quota) && Number.isFinite(quotaUsed)
-      ? `${quotaUsed}/${quota}`
-      : "未知";
-    const depleted = Number.isFinite(quota) && Number.isFinite(quotaUsed)
-      && (quota <= 0 || quotaUsed >= quota);
-    error.code = depleted ? "QUOTA_EXCEEDED" : "TRACE_CONCURRENCY";
-    error.message = depleted
-      ? `你当前公网 IP 的 trace.moe 搜索额度已用完（${usage}）`
-      : `你当前公网 IP 的 trace.moe 并发限制繁忙（额度 ${usage}），稍后重试`;
-  } catch (diagnosticError) {
-    error.code = "TRACE_CONCURRENCY";
-    error.message = `trace.moe 返回 402，额度诊断失败：${diagnosticError.message}`;
-  }
-}
-
-function selectBestTraceResult(traceData) {
-  return (Array.isArray(traceData?.result) ? traceData.result : [])
-    .filter((result) => result?.image)
-    .filter((result) => result?.anilist?.isAdult !== true)
-    .sort((left, right) => (Number(right.similarity) || 0) - (Number(left.similarity) || 0))[0] || null;
-}
-
-function isAllowedTraceInputUrl(value) {
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname.toLowerCase();
-    return url.protocol === "https:"
-      && (hostname === "sakugabooru.com" || hostname.endsWith(".sakugabooru.com"));
-  } catch {
-    return false;
-  }
-}
-
-async function postJson(url, body, externalSignal) {
-  const response = await fetchWithBrowserTimeout(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  }, REQUEST_TIMEOUT_MS, externalSignal);
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    const error = new Error(data?.error || `HTTP ${response.status}`);
-    error.code = data?.code || null;
-    throw error;
-  }
-  return data;
-}
-
-async function fetchWithBrowserTimeout(url, options, timeoutMs, externalSignal) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const abort = () => controller.abort();
-  if (externalSignal?.aborted) controller.abort();
-  else externalSignal?.addEventListener("abort", abort, { once: true });
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-    externalSignal?.removeEventListener("abort", abort);
-  }
-}
-
-async function localizeFrameTitle(item, externalSignal) {
-  const translation = item?.translation;
-  const cacheKey = typeof translation?.cacheKey === "string" ? translation.cacheKey.trim() : "";
-  const text = typeof translation?.text === "string" ? translation.text.trim() : "";
-  if (!cacheKey || cacheKey.length > 1000 || !text || text.length > 500) return item;
-
-  const cachedTitle = state.translationCache.get(cacheKey);
-  if (cachedTitle) {
-    state.translationCache.delete(cacheKey);
-    state.translationCache.set(cacheKey, cachedTitle);
-    item.title = cachedTitle;
-    item.titleLanguage = "zh";
-    item.titleSource = "browser-translation-cache";
-    return item;
-  }
-
-  const canTranslate = state.serverDeepSeekApiKeySource === "environment"
-    || (state.browserDeepSeekApiKey && state.deepSeekApiKeyValidationState === "valid");
-  if (!canTranslate) return item;
-
-  try {
-    const response = await fetch("/api/deepseek/translate", {
-      method: "POST",
-      signal: externalSignal,
-      headers: {
-        "Content-Type": "application/json",
-        ...buildDeepSeekRequestHeaders(),
+    const catalog = await ensureCatalog();
+    if (token !== state.launchToken || state.mode !== 'hard') return;
+    const provider = new HardQuestionProvider({
+      apiKey, catalog, batchSize: GAME_CONFIG.hard.batchSize,
+      onBufferChange: (count) => {
+        if (state.provider === provider) els.poolCount.textContent = `${count} / ${GAME_CONFIG.hard.batchSize}`;
       },
-      body: JSON.stringify({
-        text,
-        sourceLanguage: translation.sourceLanguage,
-      }),
     });
-    const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new Error(data?.error || `HTTP ${response.status}`);
-    }
-    const translatedTitle = typeof data?.title === "string" ? data.title.trim() : "";
-    if (!translatedTitle || translatedTitle.length > 200) return item;
-    item.title = translatedTitle;
-    item.titleLanguage = "zh";
-    item.titleSource = "deepseek-translate";
-    storeTranslation(cacheKey, translatedTitle);
+    state.provider = provider;
+    state.engine = createEngine({ mode: 'hard', provider, questionLimit: null, timed: false });
+    await state.engine.start();
   } catch (error) {
-    if (error.name !== "AbortError") {
-      console.warn(`[翻译] ${text} 翻译失败，继续使用回退标题：`, error.message);
-    }
+    if (token === state.launchToken) renderEngineError(error, () => void beginHard(apiKey));
   }
-  return item;
 }
 
-function getExcludedCopyrightTags() {
-  const tags = new Set();
-
-  const addItemTags = (item) => {
-    for (const tag of getCopyrightTags(item)) {
-      tags.add(tag);
-      if (tags.size >= MAX_EXCLUDED_COPYRIGHT_TAGS) return;
-    }
-  };
-
-  for (const favorite of state.favorites) {
-    for (const tag of favorite.tags || []) {
-      if (typeof tag !== "string" || !tag) continue;
-      tags.add(tag);
-      if (tags.size >= MAX_EXCLUDED_COPYRIGHT_TAGS) return [...tags];
-    }
-  }
-  for (const answeredTags of state.recentAnsweredCopyrightTags) {
-    for (const tag of answeredTags) {
-      tags.add(tag);
-      if (tags.size >= MAX_EXCLUDED_COPYRIGHT_TAGS) return [...tags];
-    }
-  }
-  addItemTags(state.current);
-  for (const item of state.pool) {
-    addItemTags(item);
-    if (tags.size >= MAX_EXCLUDED_COPYRIGHT_TAGS) break;
-  }
-  return [...tags];
+function finishHardGame() {
+  const snapshot = state.engine?.snapshot();
+  if (state.mode === 'hard' && snapshot?.answered >= GAME_CONFIG.hard.minRankQuestions) state.engine.finish();
 }
 
-function getCopyrightTags(item) {
-  const tags = item?.sakugabooru?.copyrightTags || item?.copyrightTags;
-  return Array.isArray(tags)
-    ? tags.filter((tag) => typeof tag === "string" && tag)
-    : [];
-}
-
-function hasCopyrightOverlap(item, excludedTags) {
-  return getCopyrightTags(item).some((tag) => excludedTags.has(tag));
-}
-
-function hasDuplicate(item) {
-  if (hasCopyrightOverlap(item, new Set(getExcludedCopyrightTags()))) {
-    return true;
-  }
-  return state.pool.some((poolItem) => poolItem.id === item.id || poolItem.title === item.title);
-}
-
-function nextQuestion() {
-  if (state.quotaExceeded && state.pool.length <= QUOTA_THRESHOLD) {
-    state.current = null;
-    state.locked = true;
-    state.historyIndex = -1;
-    updateUi();
-    return;
-  }
-
-  if (!state.quotaExceeded && state.pool.length < MIN_READY_SIZE) {
-    state.current = null;
-    state.locked = true;
-    state.historyIndex = -1;
-    updateUi();
-    return;
-  }
-
-  state.locked = false;
-  state.historyIndex = -1;
-  state.current = state.pool.shift();
-  updateFavoriteButton();
-  const wrongOptions = pickWrongOptions(state.current.title);
-  renderQuestion(shuffle([state.current.title, ...wrongOptions]));
-  updateUi();
-  updateHistoryButtons();
-}
-
-function skipQuestion() {
-  if (!state.current || state.locked) return;
-  rememberAnsweredCopyrightTags(state.current);
-  nextQuestion();
-}
-
-function pickWrongOptions(answer) {
-  const answerKey = normalizeTitleForComparison(answer);
-  const titlesByKey = new Map();
-  const candidates = [
-    ...state.pool.map((item) => item.title),
-    ...state.titleBank,
-    ...state.translationTitleBank,
-  ];
-
-  for (const title of candidates) {
-    const titleKey = normalizeTitleForComparison(title);
-    if (!titleKey || titleKey === answerKey || titlesByKey.has(titleKey)) continue;
-    titlesByKey.set(titleKey, title);
-  }
-  return shuffle([...titlesByKey.values()]).slice(0, 3);
-}
-
-function normalizeTitleForComparison(title) {
-  return typeof title === "string"
-    ? title.trim().normalize("NFKC").replace(/\s+/g, " ").toLowerCase()
-    : "";
-}
-
-function renderQuestion(options) {
-  state.current._options = [...options];
-  els.feedback.textContent = "";
-  els.feedback.classList.remove("correct", "wrong");
-  els.options.innerHTML = "";
-  els.animeFrame.src = state.current.image;
-  els.animeFrame.style.display = "block";
-  els.animeFrame.style.cursor = "pointer";
-  els.animeFrame.onclick = () => openTraceSearch(state.current.traceImage || state.current.image);
-
-  options.forEach((title) => {
-    const button = document.createElement("button");
-    button.className = "option";
-    button.type = "button";
-    button.textContent = title;
-    button.addEventListener("click", () => answerQuestion(button, title));
-    els.options.append(button);
+function createEngine({ mode, provider, questionLimit, timed }) {
+  return new QuizEngine({
+    mode, provider, questionLimit, timed,
+    questionSeconds: GAME_CONFIG.questionSeconds,
+    scoreTiers: GAME_CONFIG.scoreThresholds,
+    feedbackMs: GAME_CONFIG.answerFeedbackMs,
+    callbacks: {
+      onLoading: (snapshot) => {
+        if (mode === 'hard' || !els.animeFrame.currentSrc) {
+          setPreparing(mode === 'hard' ? '正在准备在线题目…' : '正在显示首题…');
+        }
+        updateStats(snapshot);
+      },
+      onQuestion: async (question, snapshot) => {
+        await showDecodedQuestionImage(question);
+        renderOptions(question);
+        els.loadingLayer.classList.add('hidden');
+        els.statusText.textContent = `第 ${snapshot.answered + 1} 题`;
+        els.feedback.textContent = '';
+      },
+      onState: updateStats,
+      onTimer: updateTimer,
+      onFeedback: renderFeedback,
+      onComplete: (result) => void completeGame(result),
+      onError: renderEngineError,
+    },
   });
 }
 
-function answerQuestion(button, selectedTitle) {
-  if (!state.current || state.locked) return;
+async function showDecodedQuestionImage(question) {
+  const token = ++state.imageToken;
+  const candidates = [...new Set([
+    question.imageUrl,
+    ...(Array.isArray(question.imageCandidates) ? question.imageCandidates : []),
+  ].filter((url) => typeof url === 'string' && url))];
+  let lastError = null;
+  for (const url of candidates) {
+    if (token !== state.imageToken) throw new DOMException('图片加载已取消', 'AbortError');
+    try {
+      await loadAndDecodeInto(els.animeFrame, url, token);
+      question.imageUrl = url;
+      question.preloadedImage = null;
+      return url;
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('这道题没有可用截图。');
+}
 
-  state.locked = true;
-  const isCorrect = selectedTitle === state.current.title;
-  state.answered += 1;
-  if (isCorrect) state.correct += 1;
-  rememberAnsweredCopyrightTags(state.current);
-
-  const optionElements = [...els.options.children];
-  optionElements.forEach((option) => {
-    option.disabled = true;
-    if (option.textContent === state.current.title) option.classList.add("correct");
+async function loadAndDecodeInto(image, url, token) {
+  await new Promise((resolve, reject) => {
+    image.onload = resolve;
+    image.onerror = () => reject(new Error('截图加载失败，正在轮换候选图片。'));
+    image.src = url;
   });
-
-  if (!isCorrect) button.classList.add("wrong");
-  els.feedback.classList.remove("correct", "wrong");
-  els.feedback.classList.add(isCorrect ? "correct" : "wrong");
-  els.feedback.textContent = isCorrect
-    ? "回答正确，正在切换下一题..."
-    : `回答错误，正确答案是：${state.current.title}`;
-
-  saveHistory(selectedTitle, isCorrect);
-  updateUi();
-  updateHistoryButtons();
-  state.nextQuestionTimerId = setTimeout(() => {
-    state.nextQuestionTimerId = null;
-    if (state.started) nextQuestion();
-  }, 900);
+  if (token !== state.imageToken) throw new DOMException('图片加载已取消', 'AbortError');
+  if (typeof image.decode === 'function') {
+    try {
+      await image.decode();
+    } catch {
+      throw new Error('截图解码失败，正在轮换候选图片。');
+    }
+  }
+  if (token !== state.imageToken) throw new DOMException('图片加载已取消', 'AbortError');
+  image.onload = null;
+  image.onerror = null;
 }
 
-function saveHistory(userAnswer, isCorrect) {
-  const options = [...els.options.children].map((btn) => ({
-    title: btn.textContent,
-    isCorrect: btn.classList.contains("correct"),
-    isUserChoice: btn.classList.contains("wrong") || (btn.classList.contains("correct") && userAnswer === btn.textContent),
-  }));
-
-  const historyItem = {
-    image: state.current.image,
-    traceImage: state.current.traceImage || state.current.image,
-    title: state.current.title,
-    copyrightTags: getCopyrightTags(state.current),
-    userAnswer,
-    isCorrect,
-    options,
-  };
-
-  state.history.push(historyItem);
-  if (state.history.length > MAX_HISTORY_SIZE) {
-    state.history.shift();
-  }
-}
-
-function updateHistoryButtons() {
-  const isViewingHistory = state.historyIndex !== -1;
-  const hasHistory = state.history.length > 0;
-
-  const canGoPrev = hasHistory && (
-    (!isViewingHistory) ||
-    (isViewingHistory && state.historyIndex > 0)
-  );
-
-  const canGoNext = isViewingHistory;
-
-  if (canGoPrev) {
-    els.prevHistoryButton.classList.remove("hidden");
-    els.prevHistoryButton.disabled = false;
-  } else {
-    els.prevHistoryButton.classList.add("hidden");
-  }
-
-  if (canGoNext) {
-    els.nextHistoryButton.classList.remove("hidden");
-    els.nextHistoryButton.disabled = false;
-  } else {
-    els.nextHistoryButton.classList.add("hidden");
-  }
-}
-
-function showHistoryItem(index) {
-  if (index < -1 || index >= state.history.length) return;
-
-  state.historyIndex = index;
-
-  if (index === -1) {
-    renderCurrentQuestion();
-  } else {
-    const item = state.history[index];
-    renderHistoryQuestion(item);
-  }
-
-  updateFavoriteButton();
-  updateHistoryButtons();
-}
-
-function showPrevHistory() {
-  if (state.historyIndex === -1) {
-    showHistoryItem(state.history.length - 1);
-  } else if (state.historyIndex > 0) {
-    showHistoryItem(state.historyIndex - 1);
-  }
-}
-
-function showNextHistory() {
-  if (state.historyIndex === -1) return;
-  if (state.historyIndex < state.history.length - 1) {
-    showHistoryItem(state.historyIndex + 1);
-  } else {
-    showHistoryItem(-1);
-  }
-}
-
-function renderHistoryQuestion(item) {
-  els.animeFrame.src = item.image;
-  els.animeFrame.style.display = "block";
-  els.animeFrame.style.cursor = "pointer";
-  els.animeFrame.onclick = () => openTraceSearch(item.traceImage);
-
-  els.options.innerHTML = "";
-  item.options.forEach((opt) => {
-    const button = document.createElement("button");
-    button.className = "option";
-    button.type = "button";
-    button.textContent = opt.title;
+function renderOptions(question) {
+  els.options.replaceChildren();
+  question.options.forEach((option, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'optionButton';
+    button.dataset.optionId = String(option.id);
+    const key = document.createElement('span');
+    key.className = 'optionKey';
+    key.textContent = String(index + 1);
+    const title = document.createElement('span');
+    title.textContent = option.title;
+    button.append(key, title);
     button.disabled = true;
-    if (opt.isCorrect) button.classList.add("correct");
-    if (opt.isUserChoice && !opt.isCorrect) button.classList.add("wrong");
+    button.addEventListener('click', () => state.engine?.answer(option.id));
     els.options.append(button);
   });
-
-  els.feedback.classList.remove("correct", "wrong");
-  els.feedback.classList.add(item.isCorrect ? "correct" : "wrong");
-  els.feedback.textContent = item.isCorrect
-    ? "回答正确"
-    : `回答错误，正确答案是：${item.title}`;
 }
 
-function renderCurrentQuestion() {
-  if (!state.current) return;
-
-  els.animeFrame.src = state.current.image;
-  els.animeFrame.style.display = "block";
-  els.animeFrame.style.cursor = "pointer";
-  els.animeFrame.onclick = () => openTraceSearch(state.current.traceImage || state.current.image);
-
-  els.options.innerHTML = "";
-  const options = state.current._options || [];
-  options.forEach((title) => {
-    const button = document.createElement("button");
-    button.className = "option";
-    button.type = "button";
-    button.textContent = title;
-    button.disabled = state.locked;
-    button.addEventListener("click", () => answerQuestion(button, title));
-    els.options.append(button);
-  });
-
-  if (state.locked) {
-    applyAnswerStateToOptions();
+function renderFeedback(answer) {
+  for (const button of els.options.querySelectorAll('.optionButton')) {
+    button.disabled = true;
+    if (button.dataset.optionId === answer.answerId) button.classList.add('correct');
+    if (answer.selectedId && button.dataset.optionId === answer.selectedId && !answer.isCorrect) button.classList.add('wrong');
+  }
+  if (answer.isCorrect) {
+    els.feedback.className = 'feedback success';
+    els.feedback.textContent = state.mode === 'hard' ? '回答正确' : `回答正确，+${answer.points} 分`;
   } else {
-    els.feedback.textContent = "";
-    els.feedback.classList.remove("correct", "wrong");
+    const prefix = answer.reason === 'timeout' ? '时间到' : answer.reason === 'skip' ? '已跳过' : '回答错误';
+    els.feedback.className = 'feedback error';
+    els.feedback.textContent = `${prefix}，正确答案：${answer.question.title}`;
   }
 }
 
-function applyAnswerStateToOptions() {
-  const lastHistory = state.history[state.history.length - 1];
-  if (!lastHistory) return;
-
-  const buttons = els.options.children;
-  for (let i = 0; i < buttons.length; i++) {
-    const btn = buttons[i];
-    const opt = lastHistory.options.find((o) => o.title === btn.textContent);
-    if (opt) {
-      if (opt.isCorrect) btn.classList.add("correct");
-      if (opt.isUserChoice && !opt.isCorrect) btn.classList.add("wrong");
-    }
-  }
-
-  els.feedback.classList.remove("correct", "wrong");
-  els.feedback.classList.add(lastHistory.isCorrect ? "correct" : "wrong");
-  els.feedback.textContent = lastHistory.isCorrect
-    ? "回答正确，正在切换下一题..."
-    : `回答错误，正确答案是：${lastHistory.title}`;
-}
-
-function rememberAnsweredCopyrightTags(item) {
-  state.recentAnsweredCopyrightTags.push([...new Set(getCopyrightTags(item))]);
-  while (state.recentAnsweredCopyrightTags.length > RECENT_ANSWERED_QUESTION_LIMIT) {
-    state.recentAnsweredCopyrightTags.shift();
-  }
-
-  const recentlyAnsweredTags = new Set(state.recentAnsweredCopyrightTags.flat());
-  state.pool = state.pool.filter((poolItem) => (
-    !hasCopyrightOverlap(poolItem, recentlyAnsweredTags)
-  ));
-}
-
-function updateUi() {
-  updateFavoriteButton();
-  const ready = state.current && state.pool.length >= MIN_READY_SIZE - 1;
-  const canAsk = state.current || state.pool.length >= MIN_READY_SIZE;
-  const accuracy = state.answered ? Math.round((state.correct / state.answered) * 100) : 0;
-
-  els.answeredCount.textContent = state.answered;
-  els.accuracyRate.textContent = `${accuracy}%`;
-  els.poolCount.textContent = `${state.pool.length}/${MAX_POOL_SIZE}`;
-  els.skipButton.disabled = !state.current || state.locked;
-
-  if (state.quotaExceeded && !state.current && state.pool.length <= QUOTA_THRESHOLD) {
-    showQuotaError();
-    return;
-  }
-
-  removeQuotaError();
-
-  let statusText = "";
-
-  if (state.quotaExceeded) {
-    statusText = "API 配额已用完，继续使用剩余题库";
-  }
-
-  if (!canAsk) {
-    clearQuestionDisplay();
-    els.loadingLayer.classList.remove("hidden");
-    els.loadingText.textContent = `正在准备题库：${state.pool.length}/${MIN_READY_SIZE}`;
-    els.statusText.textContent = state.fetching ? "正在请求 API" : "等待题库";
-    els.feedback.textContent = "";
-    return;
-  }
-
-  els.loadingLayer.classList.toggle("hidden", Boolean(ready));
-  els.loadingText.textContent = "题库不足，正在补充...";
-  els.statusText.textContent = statusText || (state.fetching ? "后台补充题库中" : "请选择正确的动漫名称");
-}
-
-function showQuotaError() {
-  clearQuestionDisplay();
-  els.loadingLayer.classList.add("hidden");
-  els.statusText.textContent = "API 配额已用完";
+function renderEngineError(error, retryAction = null) {
+  if (error?.name === 'AbortError') return;
+  els.loadingLayer.classList.remove('hidden');
+  els.loadingText.textContent = error?.message || '题目加载失败';
+  els.statusText.textContent = '暂时无法载入题目';
+  els.feedback.className = 'feedback error';
+  els.feedback.textContent = '可重试；返回首页不会提交本局记录。';
+  els.options.replaceChildren();
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'primaryButton fullWidth';
+  retry.textContent = '重试加载';
+  retry.addEventListener('click', () => {
+    if (typeof retryAction === 'function') retryAction();
+    else void state.engine?.retry();
+  });
+  els.options.append(retry);
   els.skipButton.disabled = true;
-  els.feedback.textContent = "";
+}
 
-  if (!document.querySelector(".quotaError")) {
-    const errorEl = document.createElement("div");
-    errorEl.className = "quotaError";
-    errorEl.innerHTML = `
-      <p class="quotaTitle">API 请求次数已达今日上限</p>
-      <p class="quotaDesc"></p>
-    `;
-    errorEl.querySelector(".quotaDesc").textContent = state.quotaMessage
-      || "你当前公网 IP 的 trace.moe 搜索额度已用完，请稍后再试。";
-    els.framePanel.appendChild(errorEl);
+function setPreparing(message) {
+  els.loadingLayer.classList.remove('hidden');
+  els.loadingText.textContent = message;
+  els.options.replaceChildren();
+  els.feedback.textContent = '';
+  els.feedback.className = 'feedback';
+  els.statusText.textContent = '正在准备';
+  els.skipButton.disabled = true;
+}
+
+function resetQuestionDisplay() {
+  state.imageToken += 1;
+  els.animeFrame.removeAttribute('src');
+  els.timerValue.textContent = GAME_CONFIG.questionSeconds.toFixed(1);
+  els.timerBar.style.transform = 'scaleX(1)';
+  els.timerTrack.classList.remove('urgent');
+  setPreparing('正在准备题目…');
+}
+
+function updateStats(snapshot) {
+  if (!snapshot || snapshot.mode !== state.mode) return;
+  const percent = Math.round(snapshot.accuracy * 100);
+  if (state.mode === 'hard') {
+    els.progressValue.textContent = `${snapshot.answered} 题`;
+    els.primaryMetric.textContent = `${percent}%`;
+    els.secondaryMetric.textContent = `${snapshot.correct} 题`;
+    els.poolCount.textContent = `${snapshot.bufferedCount} / ${GAME_CONFIG.hard.batchSize}`;
+    els.finishHardButton.disabled = snapshot.answered < GAME_CONFIG.hard.minRankQuestions;
+    els.finishHardButton.textContent = snapshot.answered < GAME_CONFIG.hard.minRankQuestions
+      ? `答满 ${GAME_CONFIG.hard.minRankQuestions} 题后结算` : '结束并结算';
+  } else {
+    els.progressValue.textContent = `${Math.min(snapshot.answered, LOCAL_COUNT)} / ${LOCAL_COUNT}`;
+    els.primaryMetric.textContent = String(snapshot.score);
+    els.secondaryMetric.textContent = `${percent}%`;
   }
+  const canAnswer = !snapshot.loading && !snapshot.locked && Boolean(snapshot.current);
+  els.skipButton.disabled = !canAnswer;
+  for (const button of els.options.querySelectorAll('.optionButton')) button.disabled = !canAnswer;
 }
 
-function clearQuestionDisplay() {
-  els.options.innerHTML = "";
-  els.animeFrame.removeAttribute("src");
-  els.animeFrame.style.display = "none";
-  els.animeFrame.style.cursor = "default";
-  els.animeFrame.onclick = null;
+function updateTimer(remainingMs, ratio) {
+  els.timerValue.textContent = (remainingMs / 1000).toFixed(1);
+  els.timerBar.style.transform = `scaleX(${Math.max(0, ratio)})`;
+  els.timerTrack.classList.toggle('urgent', remainingMs <= 2000);
 }
 
-function removeQuotaError() {
-  const errorEl = document.querySelector(".quotaError");
-  if (errorEl) errorEl.remove();
+function emptySnapshot(mode) {
+  return { mode, answered: 0, correct: 0, accuracy: 0, score: 0, bufferedCount: 0, loading: true, locked: true, current: null };
 }
 
-function openTraceSearch(imageUrl) {
-  if (!imageUrl) return;
-  window.open(
-    `https://trace.moe/?url=${encodeURIComponent(imageUrl)}`,
-    "_blank",
-    "noopener,noreferrer",
+function openFreeFilter(initial) {
+  state.freeFilterInitial = initial;
+  state.draftTags = [...state.freeFilter.tags];
+  populateFreeFilter(state.freeFilter);
+  renderSelectedTags();
+  els.freeTagSearch.value = '';
+  els.freeTagResults.replaceChildren();
+  els.freeTagResults.classList.add('hidden');
+  updateFreeFilterPreview();
+  openModal(els.freeFilterModal, els.freeTitleQuery);
+}
+
+function restartFromFreeFilter() {
+  state.launchToken += 1;
+  stopGame();
+  setPreparing('请确认新的筛选条件…');
+  openFreeFilter(false);
+}
+
+function closeFreeFilter() {
+  closeModal(els.freeFilterModal);
+  if (state.freeFilterInitial) {
+    showHome();
+    return;
+  }
+  state.launchToken += 1;
+  startLocalEngine('free', state.catalog, filterAnime(state.catalog, state.freeFilter));
+}
+
+function populateFreeFilter(filter) {
+  els.freeTitleQuery.value = filter.titleQuery || '';
+  els.freeStartDate.value = filter.startDate || '';
+  els.freeEndDate.value = filter.endDate || '';
+  writeOptionalInput(els.freeMinScore, filter.minScore);
+  writeOptionalInput(els.freeMaxScore, filter.maxScore);
+  writeOptionalInput(els.freeMaxRank, filter.maxRank);
+  writeOptionalInput(els.freeMinRatings, filter.minRatings);
+  writeOptionalInput(els.freeMinDone, filter.minDone);
+  els.freeMinImages.value = String(filter.minImages || 1);
+  const mode = filter.tagMode === 'all' ? 'all' : 'any';
+  const radio = els.freeFilterForm.querySelector(`input[name='freeTagMode'][value='${mode}']`);
+  if (radio) radio.checked = true;
+}
+
+function resetFreeFilter() {
+  state.draftTags = [];
+  populateFreeFilter(DEFAULT_FREE_FILTER);
+  els.freeTagSearch.value = '';
+  renderSelectedTags();
+  renderTagSearch();
+  updateFreeFilterPreview();
+}
+
+function readFreeFilter() {
+  return {
+    titleQuery: els.freeTitleQuery.value.trim(),
+    startDate: els.freeStartDate.value,
+    endDate: els.freeEndDate.value,
+    minScore: readOptionalNumber(els.freeMinScore),
+    maxScore: readOptionalNumber(els.freeMaxScore),
+    maxRank: readOptionalNumber(els.freeMaxRank),
+    minRatings: readOptionalNumber(els.freeMinRatings),
+    minDone: readOptionalNumber(els.freeMinDone),
+    minImages: readOptionalNumber(els.freeMinImages) ?? 1,
+    tags: [...state.draftTags],
+    tagMode: els.freeFilterForm.querySelector(`input[name='freeTagMode']:checked`)?.value || 'any',
+  };
+}
+
+function validateFreeFilter(filter) {
+  if (!els.freeFilterForm.checkValidity()) return '请检查数字范围与必填项。';
+  if (filter.startDate && filter.endDate && filter.startDate > filter.endDate) return '起始日期不能晚于结束日期。';
+  if (filter.minScore !== null && filter.maxScore !== null && filter.minScore > filter.maxScore) return '最低评分不能高于最高评分。';
+  return '';
+}
+
+function updateFreeFilterPreview() {
+  if (!state.catalog) {
+    els.freeMatchCount.textContent = '正在载入精简题库…';
+    els.freeFilterStartButton.disabled = true;
+    return;
+  }
+  const filter = readFreeFilter();
+  const error = validateFreeFilter(filter);
+  if (error) {
+    state.freeEligible = [];
+    els.freeMatchCount.textContent = '当前条件无效';
+    els.freeFilterStartButton.disabled = true;
+    setFormMessage(els.freeFilterMessage, error, 'error');
+    return;
+  }
+  state.freeEligible = filterAnime(state.catalog, filter);
+  const enough = state.freeEligible.length >= LOCAL_COUNT;
+  els.freeMatchCount.textContent = `匹配 ${state.freeEligible.length} 部有截图番剧`;
+  els.freeFilterStartButton.disabled = !enough;
+  setFormMessage(
+    els.freeFilterMessage,
+    enough ? `将从匹配结果中无放回抽取 ${LOCAL_COUNT} 部番剧。` : `至少需要 ${LOCAL_COUNT} 部，请放宽筛选条件。`,
+    enough ? 'success' : 'error',
   );
 }
 
-function shuffle(items) {
-  const copy = [...items];
-  for (let index = copy.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1));
-    [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
-  }
-  return copy;
+function startFilteredGame(event) {
+  event.preventDefault();
+  updateFreeFilterPreview();
+  if (els.freeFilterStartButton.disabled || state.freeEligible.length < LOCAL_COUNT) return;
+  const filter = readFreeFilter();
+  state.freeFilter = { ...filter, tags: [...filter.tags] };
+  state.freeFilterInitial = false;
+  closeModal(els.freeFilterModal);
+  state.launchToken += 1;
+  startLocalEngine('free', state.catalog, state.freeEligible);
 }
 
-function delay(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+function renderTagSearch() {
+  els.freeTagResults.replaceChildren();
+  if (!state.catalog || Array.from(els.freeTagSearch.value.trim()).length < 2) {
+    els.freeTagResults.classList.add('hidden');
+    return;
+  }
+  const selected = new Set(state.draftTags);
+  const matches = searchTags(state.catalog, els.freeTagSearch.value, 16).filter((item) => !selected.has(item.name));
+  if (!matches.length) {
+    const empty = document.createElement('p');
+    empty.textContent = '没有匹配标签';
+    els.freeTagResults.append(empty);
+  } else {
+    for (const item of matches) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.tag = item.name;
+      button.textContent = `${item.name}（${item.animeCount} 部）`;
+      els.freeTagResults.append(button);
+    }
+  }
+  els.freeTagResults.classList.remove('hidden');
+}
+
+function chooseTag(event) {
+  const button = event.target.closest('button[data-tag]');
+  if (!button || state.draftTags.includes(button.dataset.tag)) return;
+  state.draftTags.push(button.dataset.tag);
+  renderSelectedTags();
+  renderTagSearch();
+  updateFreeFilterPreview();
+}
+
+function removeTag(event) {
+  const button = event.target.closest('button[data-tag]');
+  if (!button) return;
+  state.draftTags = state.draftTags.filter((tag) => tag !== button.dataset.tag);
+  renderSelectedTags();
+  renderTagSearch();
+  updateFreeFilterPreview();
+}
+
+function renderSelectedTags() {
+  els.freeSelectedTags.replaceChildren();
+  if (!state.draftTags.length) {
+    const empty = document.createElement('span');
+    empty.className = 'emptyTags';
+    empty.textContent = '尚未选择标签';
+    els.freeSelectedTags.append(empty);
+    return;
+  }
+  for (const tag of state.draftTags) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.dataset.tag = tag;
+    chip.textContent = `${tag} ×`;
+    els.freeSelectedTags.append(chip);
+  }
+}
+
+async function completeGame(result) {
+  if (result.mode !== state.mode) return;
+  state.pendingResult = result;
+  state.resultMode = result.mode;
+  const ranked = result.mode === 'classic'
+    || (result.mode === 'hard' && result.answered >= GAME_CONFIG.hard.minRankQuestions);
+  if (ranked && !readLeaderboardProfile().resolved) {
+    els.profileUsername.value = '';
+    els.profileMessage.textContent = '';
+    openModal(els.profileModal, els.profileUsername);
+    return;
+  }
+  await finalizeResult(result, ranked);
+}
+
+function resolveProfile(event) {
+  event.preventDefault();
+  saveLeaderboardProfile(normalizeUsername(els.profileUsername.value));
+  closeModal(els.profileModal);
+  if (state.pendingResult) void finalizeResult(state.pendingResult, true);
+}
+
+function skipProfile() {
+  saveLeaderboardProfile('');
+  closeModal(els.profileModal);
+  if (state.pendingResult) void finalizeResult(state.pendingResult, true);
+}
+
+async function finalizeResult(result, ranked) {
+  state.pendingResult = null;
+  els.resultTitle.textContent = result.mode === 'hard' ? '困难挑战结算' : result.mode === 'free' ? '自由练习完成' : '经典挑战完成';
+  els.resultLead.textContent = result.mode === 'hard'
+    ? `连续完成 ${result.answered} 道题，已满足排行榜最低题数。` : `完整完成 ${LOCAL_COUNT} 道题，本局成绩有效。`;
+  const accuracy = Math.round(result.accuracy * 10000) / 100;
+  els.resultMainValue.textContent = result.mode === 'hard' ? `${accuracy}%` : `${result.score} / ${LOCAL_MAX_SCORE}`;
+  els.resultMainLabel.textContent = result.mode === 'hard' ? '正确率' : '总分';
+  els.resultCorrectValue.textContent = `${result.correct} / ${result.answered}`;
+  els.resultElapsedValue.textContent = formatDuration(result.elapsedMs);
+  renderResultReview(result.answers);
+  els.resultRefilterButton.classList.toggle('hidden', result.mode !== 'free');
+  els.leaderboardSection.classList.toggle('hidden', !ranked);
+  openModal(els.resultModal, els.resultReplayButton);
+  if (!ranked) return;
+
+  abortLeaderboard();
+  state.leaderboardController = new AbortController();
+  els.leaderboardBody.replaceChildren();
+  els.leaderboardDay.textContent = '';
+  setFormMessage(els.leaderboardStatus, '正在同步今日最佳成绩…', 'loading');
+  try {
+    const profile = readLeaderboardProfile();
+    const data = profile.username
+      ? await submitLeaderboardResult(result, state.leaderboardController.signal)
+      : await getLeaderboard(result.mode, state.leaderboardController.signal);
+    renderLeaderboard(data, result.mode);
+    const status = profile.username
+      ? data.personalBest?.rank
+        ? `你的今日最佳排名：#${data.personalBest.rank}`
+        : '成绩已记录；服务器仅保留你今天最好的一局。'
+      : '本会话未填写用户名，仅查看榜单。';
+    setFormMessage(els.leaderboardStatus, status, 'success');
+  } catch (error) {
+    if (error.name !== 'AbortError') setFormMessage(els.leaderboardStatus, error.message, 'error');
+  }
+}
+
+function renderLeaderboard(data, mode) {
+  els.leaderboardDay.textContent = data.dayKey ? `${data.dayKey}（北京时间）` : '';
+  renderLeaderboardRows(els.leaderboardBody, data.entries, mode);
+}
+
+function renderLeaderboardRows(body, entries, mode) {
+  body.replaceChildren();
+  if (!entries.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    cell.textContent = '今天还没有上榜记录';
+    row.append(cell);
+    body.append(row);
+    return;
+  }
+  for (const entry of entries) {
+    const row = document.createElement('tr');
+    const accuracy = Number.isFinite(Number(entry.accuracy))
+      ? Number(entry.accuracy) : Number(entry.accuracyPpm || 0) / 10000;
+    const values = [
+      entry.rank ? `#${entry.rank}` : '—',
+      entry.username || '—',
+      mode === 'hard' ? `${accuracy.toFixed(2)}%` : `${entry.score} 分`,
+      `${entry.correctCount} / ${entry.questionCount}`,
+      formatDuration(entry.elapsedMs),
+      formatCompletedAt(entry.completedAt),
+    ];
+    for (const value of values) {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.append(cell);
+    }
+    body.append(row);
+  }
+}
+
+function renderResultReview(answers) {
+  const records = Array.isArray(answers) ? answers : [];
+  els.resultReviewSection.classList.toggle('hidden', records.length === 0);
+  els.resultReviewList.replaceChildren();
+  els.resultReviewSummary.textContent = records.length ? `共 ${records.length} 道，标签最多展示 5 个` : '';
+  if (!records.length) return;
+
+  const fragment = document.createDocumentFragment();
+  records.forEach((record, index) => {
+    const question = record?.question || {};
+    const card = document.createElement('article');
+    card.className = 'reviewCard';
+    const image = document.createElement('img');
+    image.className = 'reviewImage';
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    image.referrerPolicy = 'no-referrer';
+    image.alt = `第 ${index + 1} 题截图`;
+    const imageUrl = question.imageUrl || question.imageCandidates?.[0] || '';
+    if (imageUrl) image.src = imageUrl;
+
+    const copy = document.createElement('div');
+    copy.className = 'reviewCopy';
+    const title = document.createElement('strong');
+    title.textContent = question.title || '未知番剧';
+    title.title = title.textContent;
+    const meta = document.createElement('div');
+    meta.className = 'reviewMeta';
+    const number = document.createElement('span');
+    number.textContent = `第 ${index + 1} 题`;
+    const result = document.createElement('span');
+    result.className = `reviewResult ${record.isCorrect ? 'correct' : 'wrong'}`;
+    result.textContent = record.isCorrect ? `答对${record.points ? ` +${record.points}` : ''}` : '答错';
+    meta.append(number, result);
+
+    const tags = [...new Set([
+      ...(Array.isArray(question.tags) ? question.tags : []),
+      ...(Array.isArray(question.copyrightTags) ? question.copyrightTags : []),
+    ])].slice(0, 5);
+    const tagList = document.createElement('div');
+    tagList.className = 'reviewTags';
+    if (!tags.length) {
+      const empty = document.createElement('span');
+      empty.className = 'emptyReviewTag';
+      empty.textContent = '暂无标签';
+      tagList.append(empty);
+    } else {
+      for (const tag of tags) {
+        const chip = document.createElement('span');
+        chip.textContent = tag;
+        tagList.append(chip);
+      }
+    }
+    copy.append(title, meta, tagList);
+    card.append(image, copy);
+    fragment.append(card);
+  });
+  els.resultReviewList.append(fragment);
+}
+
+function replayResultMode() {
+  const mode = state.resultMode;
+  closeModal(els.resultModal);
+  if (mode === 'classic') void beginClassic();
+  else if (mode === 'free') {
+    state.launchToken += 1;
+    startLocalEngine('free', state.catalog, filterAnime(state.catalog, state.freeFilter));
+  } else {
+    showHome();
+    openHardModal();
+  }
+}
+
+function abortLeaderboard() {
+  state.leaderboardController?.abort();
+  state.leaderboardController = null;
+}
+
+function abortHomeLeaderboard() {
+  state.homeLeaderboardController?.abort();
+  state.homeLeaderboardController = null;
+}
+
+function setFormMessage(element, message, kind) {
+  element.textContent = message;
+  if (kind) element.dataset.state = kind;
+  else delete element.dataset.state;
+}
+
+function readOptionalNumber(input) {
+  return input.value === '' || !Number.isFinite(input.valueAsNumber) ? null : input.valueAsNumber;
+}
+
+function writeOptionalInput(input, value) {
+  input.value = Number.isFinite(value) ? String(value) : '';
+}
+
+function readHardKey() {
+  try {
+    return sessionStorage.getItem(HARD_KEY_STORAGE) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeHardKey(value) {
+  try {
+    sessionStorage.setItem(HARD_KEY_STORAGE, value);
+  } catch {
+    // The validated key remains available in the form for this page lifetime.
+  }
+}
+
+function formatDuration(milliseconds) {
+  const totalSeconds = Math.max(0, Math.round(Number(milliseconds) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatCompletedAt(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : dateTimeFormatter.format(date);
 }

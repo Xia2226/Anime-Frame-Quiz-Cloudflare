@@ -1,253 +1,44 @@
 <!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>动漫截图猜番</title>
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <main class="app">
-      <section id="startScreen" class="startScreen">
-        <button
-          id="favoritesButton"
-          type="button"
-          class="favoritesButton"
-          aria-label="收藏动漫列表"
-          title="收藏动漫列表"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 17.3 6.18 20.9l1.64-7.03L2.5 9.24l7.19-.62L12 2l2.31 6.62 7.19.62-5.32 4.63 1.64 7.03Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <button
-          id="settingsButton"
-          type="button"
-          class="settingsButton"
-          aria-label="随机挑战筛选设置"
-          title="随机挑战筛选设置"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"></path>
-            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.42 1.42-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20h-2v-.48A1.7 1.7 0 0 0 12.38 18a1.7 1.7 0 0 0-1.88.34l-.06.06-1.42-1.42.06-.06A1.7 1.7 0 0 0 9.42 15a1.7 1.7 0 0 0-1.56-1.03H7.4v-2h.46A1.7 1.7 0 0 0 9.42 11a1.7 1.7 0 0 0-.34-1.88l-.06-.06 1.42-1.42.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 13.41 6.5V6h2v.5a1.7 1.7 0 0 0 1.03 1.54 1.7 1.7 0 0 0 1.88-.34l.06-.06 1.42 1.42-.06.06A1.7 1.7 0 0 0 19.4 11a1.7 1.7 0 0 0 1.56 1.03h.46v2h-.46A1.7 1.7 0 0 0 19.4 15Z"></path>
-          </svg>
-        </button>
-        <div class="startContent">
-          <p class="eyebrow">Anime Frame Quiz</p>
-          <h1>动漫截图猜番</h1>
-          <p class="startDesc">根据动漫截图，猜出正确的番剧名称</p>
-
-          <form id="apiKeyForm" class="apiKeyConfig">
-            <label for="deepSeekApiKeyInput">DeepSeek API Key（可选）</label>
-            <div class="apiKeyInputRow">
-              <input
-                id="deepSeekApiKeyInput"
-                name="deepSeekApiKey"
-                type="password"
-                maxlength="512"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="输入后仅在当前浏览器标签页使用"
-              />
-              <button id="apiKeySaveButton" type="submit">应用并检测</button>
-            </div>
-            <p id="apiKeySummary" class="apiKeySummary" role="status">
-              正在检查 Cloudflare Worker 环境 Secret DEEPSEEK_API_KEY...
-            </p>
-          </form>
-
-          <button id="startButton" type="button" class="startButton">
-            开始游戏
-          </button>
-          </div>
-          <div class="startFooter">
-            <p class="startHint">题库由 sakugabooru.com、trace.moe、AniList 提供支持</p>
-            <p class="startHint">trace.moe 由浏览器直连，搜索额度按当前公网 IP 计算</p>
-            <p id="settingsSummary" class="settingsSummary">筛选配置加载中...</p>
-          </div>
-      </section>
-
-      <section id="gameScreen" class="gameScreen hidden">
-        <button id="backButton" type="button" class="backButton" aria-label="返回首页" title="返回首页">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <section class="topbar">
-          <p class="eyebrow">Anime Frame Quiz</p>
-          <h1>动漫截图猜番</h1>
-          <div class="stats" aria-label="答题统计">
-            <div>
-              <span id="answeredCount">0</span>
-              <small>已答</small>
-            </div>
-            <div>
-              <span id="accuracyRate">0%</span>
-              <small>正确率</small>
-            </div>
-            <div>
-              <span id="poolCount">0/15</span>
-              <small>题库</small>
-            </div>
-          </div>
-        </section>
-
-        <section class="quiz" aria-live="polite">
-          <div class="framePanelWrapper">
-            <button
-              id="prevHistoryButton"
-              type="button"
-              class="historyButton historyPrev hidden"
-              aria-label="上一题"
-              title="上一题"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-            <button
-              id="nextHistoryButton"
-              type="button"
-              class="historyButton historyNext hidden"
-              aria-label="下一题"
-              title="下一题"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M9 18l6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-            <div class="framePanel">
-              <div id="loadingLayer" class="loadingLayer">
-                <div class="spinner" aria-hidden="true"></div>
-                <p id="loadingText">正在准备题目...</p>
-              </div>
-              <img id="animeFrame" alt="待猜测的动漫截图" />
-            <button
-              id="favoriteButton"
-              type="button"
-              class="favoriteButton hidden"
-              aria-label="收藏此动漫"
-              title="收藏此动漫"
-              disabled
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" class="starOutline">
-                <path d="M12 17.3 6.18 20.9l1.64-7.03L2.5 9.24l7.19-.62L12 2l2.31 6.62 7.19.62-5.32 4.63 1.64 7.03Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-              </svg>
-              <svg viewBox="0 0 24 24" aria-hidden="true" class="starFilled">
-                <path d="M12 17.3 6.18 20.9l1.64-7.03L2.5 9.24l7.19-.62L12 2l2.31 6.62 7.19.62-5.32 4.63 1.64 7.03Z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-              </svg>
-            </button>
-          </div>
-          </div>
-
-          <div class="sidePanel">
-            <div class="questionHead">
-              <p id="statusText">初始化中</p>
-              <button id="skipButton" type="button" disabled>跳过</button>
-            </div>
-            <div id="options" class="options"></div>
-            <p id="feedback" class="feedback"></p>
-          </div>
-        </section>
-      </section>
-    </main>
-
-    <div
-      id="settingsModal"
-      class="settingsModal hidden"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="settingsTitle"
-    >
-      <section class="settingsDialog">
-        <header class="settingsHeader">
-          <div>
-            <p class="eyebrow">Sakugabooru Filter</p>
-            <h2 id="settingsTitle">随机挑战筛选设置</h2>
-          </div>
-          <button id="settingsCloseButton" type="button" class="settingsCloseButton" aria-label="关闭">×</button>
-        </header>
-
-        <form id="settingsForm" novalidate>
-          <fieldset>
-            <legend>投稿时间范围</legend>
-            <div class="settingsGrid">
-              <label>
-                <span>起始日期</span>
-                <input id="filterStartDate" name="startDate" type="date" min="2000-01-01" />
-                <small>可留空。建议按季度或年份筛选，最早支持 2000-01-01。</small>
-              </label>
-              <label>
-                <span>结束日期</span>
-                <input id="filterEndDate" name="endDate" type="date" min="2000-01-01" />
-                <small>可留空，不能早于起始日期，最晚为今天。</small>
-              </label>
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend>热度范围</legend>
-            <div class="settingsGrid">
-              <label>
-                <span>最低热度</span>
-                <input id="filterMinScore" name="minScore" type="number" min="-1000" max="100000" step="1" placeholder="例如 20" />
-                <small>对应帖子 score。建议 0–100；设为 20 可减少冷门片段。</small>
-              </label>
-              <label>
-                <span>最高热度</span>
-                <input id="filterMaxScore" name="maxScore" type="number" min="-1000" max="100000" step="1" placeholder="例如 300" />
-                <small>可留空，必须不低于最低热度；允许范围 -1000–100000。</small>
-              </label>
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend>内容分级</legend>
-            <label>
-              <span>允许的内容</span>
-              <select id="filterRating" name="rating">
-                <option value="s">Safe（安全，默认）</option>
-                <option value="q">Questionable（可能敏感）</option>
-                <option value="e">Explicit（成人内容）</option>
-                <option value="">全部分级</option>
-              </select>
-              <small>建议保持 Safe。选择其他分级可能出现不适合公开场景的内容。</small>
-            </label>
-          </fieldset>
-
-          <p id="settingsEffectiveTags" class="settingsEffectiveTags"></p>
-          <p id="settingsMessage" class="settingsMessage" role="status"></p>
-
-          <footer class="settingsActions">
-            <button id="settingsResetButton" type="button" class="settingsSecondaryButton">恢复默认</button>
-            <button id="settingsSaveButton" type="submit" class="settingsSaveButton">保存设置</button>
-          </footer>
-        </form>
-      </section>
-    </div>
-
-    <div
-      id="favoritesModal"
-      class="settingsModal hidden"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="favoritesTitle"
-    >
-      <section class="settingsDialog">
-        <header class="settingsHeader">
-          <div>
-            <p class="eyebrow">Favorites</p>
-            <h2 id="favoritesTitle">收藏动漫列表</h2>
-          </div>
-          <button id="favoritesCloseButton" type="button" class="settingsCloseButton" aria-label="关闭">×</button>
-        </header>
-        <div id="favoritesList" class="favoritesList">
-          <p class="favoritesEmpty">暂无收藏的动漫</p>
-        </div>
-        <p class="favoritesHint">收藏的动漫将不会出现在随机挑战中</p>
-      </section>
-    </div>
-
-    <script src="./app.js"></script>
-  </body>
-</html>
+<html lang='zh-CN'>
+<head>
+<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+<meta name='description' content='从动画截图猜番剧，支持经典、自由筛选与困难挑战三种模式。'>
+<title>动漫截图猜番</title><link rel='stylesheet' href='./styles.css'>
+</head>
+<body>
+<main class='appShell'>
+<section id='startScreen' class='startScreen'>
+<div class='homeStack'><div class='heroCard'><div class='homeTopActions'><button id='gameGuideButton' class='homeUtilityButton gameGuideButton' type='button' aria-label='查看游戏说明'>游戏说明</button><button id='homeLeaderboardButton' class='homeUtilityButton homeLeaderboardButton' type='button' aria-label='查看今日排行榜'>今日榜单</button></div><div class='heroCopy'><p class='eyebrow'>Anime Frame Quiz</p><h1>从一帧画面，认出一部动画</h1><p class='heroDescription'>经典模式比速度，自由模式按喜好筛选，困难挑战用在线识图考验阅片量。</p></div>
+<div class='modeGrid' aria-label='选择游戏模式'>
+<button id='classicModeButton' class='modeCard modeCardClassic' type='button'><span class='modeIcon'>50</span><span class='modeCopy'><strong>经典模式</strong><small>随机 50 部番剧 · 每题 10 秒 · 满分 500</small></span><span class='modeArrow'>→</span></button>
+<button id='freeModeButton' class='modeCard modeCardFree' type='button'><span class='modeIcon'>⌕</span><span class='modeCopy'><strong>自由模式</strong><small>按日期、评分、热度与标签组合筛选</small></span><span class='modeArrow'>→</span></button>
+<button id='startButton' class='modeCard modeCardHard' type='button'><span class='modeIcon'>∞</span><span class='modeCopy'><strong>困难挑战</strong><small>在线随机题源 · 不限时 · 50 题后可结算</small></span><span class='modeArrow'>→</span></button>
+</div></div>
+<footer class='startFooter'><p>资源支持：<a href='https://fancaps.net/' target='_blank' rel='noreferrer'>Fancaps</a> · <a href='https://bangumi.tv/' target='_blank' rel='noreferrer'>Bangumi</a>；困难题源：<a href='https://www.sakugabooru.com/' target='_blank' rel='noreferrer'>Sakugabooru</a> · <a href='https://trace.moe/' target='_blank' rel='noreferrer'>trace.moe</a> · <a href='https://anilist.co/' target='_blank' rel='noreferrer'>AniList</a></p><a class='footerPillLink libraryLink' href='./library.html'>图库资源 ↗</a><a class='footerPillLink githubLink' href='https://github.com/Xia2226/Anime-Frame-Quiz-Cloudflare' target='_blank' rel='noreferrer'>GitHub 仓库 ↗</a></footer></div>
+</section>
+<section id='gameScreen' class='gameScreen hidden'>
+<header class='gameHeader'><button id='backButton' class='iconButton' type='button' aria-label='返回首页'>←</button><div class='gameHeading'><p id='gameModeLabel' class='eyebrow'>Classic Mode</p><h1 id='gameTitle'>经典模式</h1></div><div class='gameActions'><button id='freeFilterButton' class='secondaryButton hidden' type='button'>重新筛选</button><button id='finishHardButton' class='primaryButton hidden' type='button' disabled>结束并结算</button></div></header>
+<section class='statsBar'><div class='statItem'><span id='progressValue'>0 / 50</span><small id='progressLabel'>进度</small></div><div class='statItem statPrimary'><span id='primaryMetric'>0</span><small id='primaryMetricLabel'>得分</small></div><div class='statItem'><span id='secondaryMetric'>0%</span><small id='secondaryMetricLabel'>正确率</small></div><div id='timerStat' class='statItem'><span id='timerValue'>10.0</span><small>剩余秒数</small></div><div id='poolStat' class='statItem hidden'><span id='poolCount'>0 / 3</span><small>待答题池</small></div></section>
+<div id='timerTrack' class='timerTrack'><span id='timerBar'></span></div>
+<section class='quizLayout'><div class='framePanel'><div id='loadingLayer' class='loadingLayer'><span class='spinner'></span><p id='loadingText'>正在准备题目…</p></div><img id='animeFrame' alt='待猜测的动漫截图' referrerpolicy='no-referrer'></div><section class='questionPanel'><div class='questionHeader'><div><p class='questionKicker'>选择正确的番剧名称</p><h2 id='statusText'>正在初始化</h2></div><button id='skipButton' class='textButton' type='button' disabled>跳过</button></div><div id='options' class='options'></div><p id='feedback' class='feedback' role='status'></p><p class='shortcutHint'>键盘 1–4 选择，空格跳过（计为答错）</p></section></section>
+</section></main>
+<div id='hardApiModal' class='modal hidden' role='dialog' aria-modal='true'>
+<section class='modalDialog compactDialog'><header class='modalHeader'><div><p class='eyebrow'>Hard Challenge</p><h2>开始困难挑战</h2></div><button id='hardApiCloseButton' class='modalClose' type='button'>×</button></header><p class='modalLead'>请输入 DeepSeek API Key。Key 仅保存在当前浏览器会话中。</p><form id='hardApiForm' class='stackForm'><label for='deepSeekApiKeyInput'>DeepSeek API Key（必填）</label><input id='deepSeekApiKeyInput' type='password' maxlength='512' autocomplete='off' required placeholder='sk-…'><p id='hardApiMessage' class='formMessage apiHint' role='status'>需验证模型权限，余额须大于 ¥1。</p><button id='hardApiConfirmButton' class='primaryButton fullWidth' type='submit'>确认并进入游戏</button></form></section>
+</div>
+<div id='homeLeaderboardModal' class='modal hidden' role='dialog' aria-modal='true' aria-labelledby='homeLeaderboardTitle'><section class='modalDialog homeLeaderboardDialog'><header class='modalHeader'><div><p class='eyebrow'>Daily Leaderboard</p><h2 id='homeLeaderboardTitle'>今日排行榜</h2></div><button id='homeLeaderboardCloseButton' class='modalClose' type='button'>×</button></header><div class='leaderboardTabs' role='tablist' aria-label='排行榜模式'><button id='homeLeaderboardClassicTab' class='leaderboardTab active' type='button' role='tab' aria-selected='true' data-mode='classic'>经典模式</button><button id='homeLeaderboardHardTab' class='leaderboardTab' type='button' role='tab' aria-selected='false' data-mode='hard'>困难挑战</button></div><div class='homeLeaderboardMeta'><p id='homeLeaderboardDay'></p><p id='homeLeaderboardStatus' class='formMessage' role='status'>请选择排行榜模式</p></div><div class='leaderboardScroller homeLeaderboardScroller'><table class='leaderboardTable'><thead><tr><th>排名</th><th>用户</th><th>成绩</th><th>题数</th><th>用时</th><th>答题时间</th></tr></thead><tbody id='homeLeaderboardBody'></tbody></table></div></section></div>
+<div id='gameGuideModal' class='modal hidden' role='dialog' aria-modal='true' aria-labelledby='gameGuideTitle'><section class='modalDialog gameGuideDialog'><header class='modalHeader'><div><p class='eyebrow'>How to Play</p><h2 id='gameGuideTitle'>游戏说明</h2></div><button id='gameGuideCloseButton' class='modalClose' type='button' aria-label='关闭游戏说明'>×</button></header><div class='gameGuideContent'><section><h3>项目介绍</h3><p>这是一个根据动画截图猜番名的小游戏。经典和自由模式使用本项目构建的 Fancaps 截图库与 Bangumi 基础资料；困难挑战使用在线随机题源和识图服务。</p></section><section><h3>三种模式</h3><ul><li><strong>经典模式：</strong>随机抽取 50 部有截图番剧，每题 10 秒，满分 500 分，完整答完后参与每日积分榜。</li><li><strong>自由模式：</strong>可按首播时间、评分、排名、热度、截图数和 Bangumi 标签筛选题库，计时计分规则与经典模式相同，但不参与排行榜。</li><li><strong>困难挑战：</strong>使用在线识图生成题目，不限时；连续完成至少 50 题后，可按正确率参与每日排行榜。</li></ul></section><section><h3>计分与操作</h3><p>经典和自由模式答对后，根据剩余时间获得 10、8、6、4 或 2 分；答错、跳过或超时不得分。可点击答案，也可使用数字键 1–4 选择，空格键跳过。</p><p>游戏页左上角的返回按钮会立即停止当前题目加载、倒计时和游戏循环，并返回首页；未完整完成的对局不会记录成绩。</p></section><section><h3>排行榜与隐私</h3><p>经典模式按得分排名，困难挑战按正确率排名。首次完成有效挑战后可以选择填写用户名，不填写则只查看榜单。困难挑战所需的 DeepSeek API Key 仅保存在当前浏览器会话中，通过请求头交给 Worker 使用，不写入排行榜数据库。</p></section><section><h3>加载说明</h3><p>经典和自由模式会先预加载 5 道题的截图再开始倒计时，并在答题过程中持续缓存后续图片。网络较慢时，首次进入游戏可能需要稍候。</p></section></div></section></div>
+<div id='freeFilterModal' class='modal hidden' role='dialog' aria-modal='true'>
+<section class='modalDialog filterDialog'><header class='modalHeader'><div><p class='eyebrow'>Free Mode Filter</p><h2>筛选本次题库</h2></div><button id='freeFilterCloseButton' class='modalClose' type='button'>×</button></header>
+<form id='freeFilterForm' class='filterForm'><fieldset><legend>基础范围</legend><div class='filterGrid'>
+<label class='wideField'>标题包含<input id='freeTitleQuery' type='search' maxlength='80' placeholder='中文名、原名均可'></label>
+<label>首播日期起<input id='freeStartDate' type='date'></label><label>首播日期止<input id='freeEndDate' type='date'></label>
+<label>最低评分<input id='freeMinScore' type='number' min='0' max='10' step='.1' placeholder='不限'></label><label>最高评分<input id='freeMaxScore' type='number' min='0' max='10' step='.1' placeholder='不限'></label>
+<label>最高排名<input id='freeMaxRank' type='number' min='1' step='1' placeholder='例如 1000'></label><label>最低评分人数<input id='freeMinRatings' type='number' min='0' step='1' placeholder='例如 500'></label><label>最低看过人数<input id='freeMinDone' type='number' min='0' step='1' placeholder='例如 500'></label><label>最低截图数<input id='freeMinImages' type='number' min='1' step='1' value='1' required></label>
+</div></fieldset><fieldset><legend>Bangumi 标签</legend><div class='tagModeRow'><label><input type='radio' name='freeTagMode' value='any' checked> 匹配任一</label><label><input type='radio' name='freeTagMode' value='all'> 匹配全部</label></div><input id='freeTagSearch' type='search' maxlength='60' autocomplete='off' placeholder='输入至少 2 个字符搜索标签'><div id='freeTagResults' class='tagResults hidden'></div><div id='freeSelectedTags' class='selectedTags'><span class='emptyTags'>尚未选择标签</span></div></fieldset>
+<div class='filterSummary'><p id='freeMatchCount'>正在载入精简题库…</p><p id='freeFilterMessage' class='formMessage' role='status'></p></div><footer class='modalActions'><button id='freeFilterResetButton' class='secondaryButton' type='button'>恢复默认</button><button id='freeFilterStartButton' class='primaryButton' type='submit' disabled>开始游戏</button></footer></form></section>
+</div>
+<div id='profileModal' class='modal hidden' role='dialog' aria-modal='true'><section class='modalDialog compactDialog'><header class='modalHeader'><div><p class='eyebrow'>Daily Leaderboard</p><h2>留下排行榜名称？</h2></div></header><p class='modalLead'>用户名可留空。填写后，本次及本会话后续完整挑战会参与每日排名。</p><form id='profileForm' class='stackForm'><label>用户名（可选）<input id='profileUsername' type='text' maxlength='20' autocomplete='nickname'></label><p id='profileMessage' class='formMessage'></p><div class='modalActions'><button id='profileSkipButton' class='secondaryButton' type='button'>暂不参加</button><button class='primaryButton' type='submit'>保存并查看排行</button></div></form></section></div>
+<div id='resultModal' class='modal hidden' role='dialog' aria-modal='true'><section class='modalDialog resultDialog'><header class='resultHeader'><p class='eyebrow'>Challenge Complete</p><h2 id='resultTitle'>本局完成</h2><p id='resultLead'></p></header><div class='resultMetrics'><div><span id='resultMainValue'>0</span><small id='resultMainLabel'>总分</small></div><div><span id='resultCorrectValue'>0 / 50</span><small>答对题数</small></div><div><span id='resultElapsedValue'>00:00</span><small>作答用时</small></div></div><section id='leaderboardSection' class='leaderboardSection'><div class='sectionHeading'><div><h3>今日排行榜</h3><p id='leaderboardDay'></p></div><p id='leaderboardStatus' class='formMessage'>正在载入…</p></div><div class='leaderboardScroller'><table class='leaderboardTable'><thead><tr><th>排名</th><th>用户</th><th>成绩</th><th>题数</th><th>用时</th><th>答题时间</th></tr></thead><tbody id='leaderboardBody'></tbody></table></div></section><section id='resultReviewSection' class='resultReviewSection'><div class='sectionHeading'><div><h3>本次题目</h3><p id='resultReviewSummary'></p></div></div><div id='resultReviewList' class='resultReviewList'></div></section><footer class='modalActions'><button id='resultHomeButton' class='secondaryButton' type='button'>返回首页</button><button id='resultRefilterButton' class='secondaryButton hidden' type='button'>重新筛选</button><button id='resultReplayButton' class='primaryButton' type='button'>再来一局</button></footer></section></div>
+<div id='globalNotice' class='globalNotice hidden' role='status'></div>
+<script type='module' src='./app.js'></script>
+</body></html>
