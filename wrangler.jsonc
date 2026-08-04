@@ -13,6 +13,7 @@
     {
       "binding": "DB",
       "database_name": "anime-frame-quiz-leaderboard",
+      "database_id": "a7f27479-5c95-4db8-9838-ff21b55e4d18",
       "migrations_dir": "migrations"
     }
   ],
