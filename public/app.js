@@ -44,7 +44,7 @@ const ids = [
   'gameGuideModal', 'gameGuideCloseButton',
   'freeFilterModal', 'freeFilterCloseButton', 'freeFilterForm', 'freeTitleQuery',
   'freeStartDate', 'freeEndDate', 'freeMinScore', 'freeMaxScore', 'freeMaxRank',
-  'freeMinRatings', 'freeMinDone', 'freeMinImages', 'freeTagSearch', 'freeTagResults',
+  'freeMinRatings', 'freeMinDone', 'freeMinImages', 'freeTagMode', 'freeTagSearch', 'freeTagResults',
   'freeSelectedTags', 'freeMatchCount', 'freeFilterMessage', 'freeFilterResetButton',
   'freeFilterStartButton', 'profileModal', 'profileForm', 'profileUsername',
   'profileMessage', 'profileSkipButton', 'resultModal', 'resultTitle', 'resultLead',
@@ -109,9 +109,13 @@ function bindEvents() {
   els.freeFilterResetButton.addEventListener('click', resetFreeFilter);
   els.freeFilterForm.addEventListener('input', updateFreeFilterPreview);
   els.freeFilterForm.addEventListener('submit', startFilteredGame);
+  els.freeTagSearch.addEventListener('focus', renderTagSearch);
   els.freeTagSearch.addEventListener('input', renderTagSearch);
   els.freeTagResults.addEventListener('click', chooseTag);
   els.freeSelectedTags.addEventListener('click', removeTag);
+  document.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest('.freeTagPicker')) els.freeTagResults.classList.add('hidden');
+  });
   els.freeFilterModal.addEventListener('click', (event) => {
     if (event.target === els.freeFilterModal) closeFreeFilter();
   });
@@ -685,8 +689,7 @@ function populateFreeFilter(filter) {
   writeOptionalInput(els.freeMinDone, filter.minDone);
   els.freeMinImages.value = String(filter.minImages || 1);
   const mode = filter.tagMode === 'all' ? 'all' : 'any';
-  const radio = els.freeFilterForm.querySelector(`input[name='freeTagMode'][value='${mode}']`);
-  if (radio) radio.checked = true;
+  els.freeTagMode.value = mode;
 }
 
 function resetFreeFilter() {
@@ -710,7 +713,7 @@ function readFreeFilter() {
     minDone: readOptionalNumber(els.freeMinDone),
     minImages: readOptionalNumber(els.freeMinImages) ?? 1,
     tags: [...state.draftTags],
-    tagMode: els.freeFilterForm.querySelector(`input[name='freeTagMode']:checked`)?.value || 'any',
+    tagMode: els.freeTagMode.value === 'all' ? 'all' : 'any',
   };
 }
 
@@ -787,9 +790,11 @@ function chooseTag(event) {
   const button = event.target.closest('button[data-tag]');
   if (!button || state.draftTags.includes(button.dataset.tag)) return;
   state.draftTags.push(button.dataset.tag);
+  els.freeTagSearch.value = '';
   renderSelectedTags();
   renderTagSearch();
   updateFreeFilterPreview();
+  els.freeTagSearch.focus({ preventScroll: true });
 }
 
 function removeTag(event) {
@@ -954,8 +959,22 @@ function renderResultReview(answers) {
     number.textContent = `第 ${index + 1} 题`;
     const result = document.createElement('span');
     result.className = `reviewResult ${record.isCorrect ? 'correct' : 'wrong'}`;
-    result.textContent = record.isCorrect ? `答对${record.points ? ` +${record.points}` : ''}` : '答错';
+    const resultLabel = record.reason === 'timeout' ? '超时'
+      : record.reason === 'skip' ? '跳过'
+        : record.isCorrect ? '答对' : '答错';
+    result.textContent = `${resultLabel}${record.points ? ` +${record.points}` : ''}`;
     meta.append(number, result);
+
+    const answer = document.createElement('p');
+    answer.className = 'reviewAnswer';
+    if (record.isCorrect) {
+      answer.textContent = `你的答案：${record.selectedTitle || question.title || '未知番剧'}`;
+    } else if (record.reason === 'timeout' || record.reason === 'skip' || !record.selectedTitle) {
+      answer.textContent = `你的答案：${record.reason === 'timeout' ? '未在时限内作答' : '未作答'}`;
+    } else {
+      answer.textContent = `你的答案：${record.selectedTitle}`;
+    }
+    answer.title = answer.textContent;
 
     const tags = [...new Set([
       ...(Array.isArray(question.tags) ? question.tags : []),
@@ -975,7 +994,7 @@ function renderResultReview(answers) {
         tagList.append(chip);
       }
     }
-    copy.append(title, meta, tagList);
+    copy.append(title, meta, answer, tagList);
     card.append(image, copy);
     fragment.append(card);
   });

@@ -28,6 +28,7 @@ const state = {
   searchTimerId: null,
   chartFrameId: null,
   chartPositioned: false,
+  chartHitAreas: [],
 };
 
 const els = {
@@ -47,6 +48,7 @@ const els = {
   tagTotal: document.querySelector("#tagTotal"),
   chartViewport: document.querySelector("#chartViewport"),
   annualChart: document.querySelector("#annualChart"),
+  chartTooltip: document.querySelector("#chartTooltip"),
   chartSummary: document.querySelector("#chartSummary"),
   topTags: document.querySelector("#topTags"),
   filterForm: document.querySelector("#filterForm"),
@@ -74,9 +76,13 @@ function initialize() {
   els.retryButton.addEventListener("click", loadLibrary);
   els.filterForm.addEventListener("submit", (event) => event.preventDefault());
   els.titleSearch.addEventListener("input", scheduleFilterUpdate);
+  els.tagSearch.addEventListener("focus", renderTagSearchResults);
   els.tagSearch.addEventListener("input", renderTagSearchResults);
   els.tagSearchResults.addEventListener("click", chooseCatalogTag);
   els.selectedCatalogTags.addEventListener("click", removeCatalogTag);
+  document.addEventListener("pointerdown", (event) => {
+    if (!event.target.closest(".tagSearchControl")) els.tagSearchResults.hidden = true;
+  });
   els.tagModeFilter.addEventListener("change", updateFiltersImmediately);
   els.scoreMin.addEventListener("input", scheduleFilterUpdate);
   els.scoreMax.addEventListener("input", scheduleFilterUpdate);
@@ -90,6 +96,9 @@ function initialize() {
   });
   els.previousPage.addEventListener("click", () => goToPage(state.page - 1));
   els.nextPage.addEventListener("click", () => goToPage(state.page + 1));
+  els.annualChart.addEventListener("pointermove", showChartTooltip);
+  els.annualChart.addEventListener("pointerleave", hideChartTooltip);
+  els.chartViewport.addEventListener("scroll", hideChartTooltip, { passive: true });
 
   if (typeof ResizeObserver === "function") {
     const observer = new ResizeObserver(scheduleChartDraw);
@@ -445,7 +454,10 @@ function renderTopTags() {
     for (const [name, count] of tags) {
       const chip = document.createElement("span");
       chip.className = "tagChip";
-      chip.title = `${name}：${integerFormatter.format(count)} 部`;
+      chip.tabIndex = 0;
+      chip.setAttribute("role", "listitem");
+      chip.title = `${name}：${integerFormatter.format(count)} 部番剧`;
+      chip.setAttribute("aria-label", chip.title);
       const label = document.createElement("span");
       label.textContent = name;
       const value = document.createElement("strong");
@@ -466,6 +478,8 @@ function scheduleChartDraw() {
 }
 
 function drawAnnualChart() {
+  hideChartTooltip();
+  state.chartHitAreas = [];
   if (els.libraryContent.hidden || !state.yearStats.length) {
     if (!state.yearStats.length && state.overview) {
       els.chartSummary.textContent = "没有包含有效首播年份的番剧，无法生成年度图表。";
@@ -564,10 +578,14 @@ function drawAnnualChart() {
     const item = state.yearStats[index];
     const x = padding.left + step * index + step / 2;
     const y = bottom - (item.animeCount / animeMax) * plotHeight;
+    state.chartHitAreas.push({ index, x, y, step });
     context.beginPath();
-    context.arc(x, y, 2.6, 0, Math.PI * 2);
-    context.fillStyle = animeColor;
+    context.arc(x, y, 4, 0, Math.PI * 2);
+    context.fillStyle = "#ffffff";
     context.fill();
+    context.lineWidth = 2.5;
+    context.strokeStyle = animeColor;
+    context.stroke();
   }
 
   const firstYear = state.yearStats[0].year;
@@ -587,6 +605,34 @@ function drawAnnualChart() {
   }
 }
 
+function showChartTooltip(event) {
+  if (!state.chartHitAreas.length) return;
+  const rect = els.annualChart.getBoundingClientRect();
+  const pointerX = event.clientX - rect.left;
+  const pointerY = event.clientY - rect.top;
+  if (pointerY < 8 || pointerY > rect.height - 35) {
+    hideChartTooltip();
+    return;
+  }
+  const hit = state.chartHitAreas.reduce((nearest, candidate) => {
+    const distance = Math.abs(pointerX - candidate.x);
+    return !nearest || distance < nearest.distance ? { ...candidate, distance } : nearest;
+  }, null);
+  if (!hit || hit.distance > Math.max(18, hit.step / 2)) {
+    hideChartTooltip();
+    return;
+  }
+  const item = state.yearStats[hit.index];
+  if (!item) return;
+  els.chartTooltip.textContent = `${item.year} 年\n${integerFormatter.format(item.animeCount)} 部番剧 · ${integerFormatter.format(item.imageCount)} 张截图`;
+  els.chartTooltip.style.left = `${hit.x}px`;
+  els.chartTooltip.style.top = `${Math.max(76, hit.y)}px`;
+  els.chartTooltip.hidden = false;
+}
+
+function hideChartTooltip() {
+  els.chartTooltip.hidden = true;
+}
 function niceCeiling(value) {
   if (!Number.isFinite(value) || value <= 0) return 1;
   const exponent = 10 ** Math.floor(Math.log10(value));
@@ -651,6 +697,7 @@ function chooseCatalogTag(event) {
   renderSelectedCatalogTags();
   renderTagSearchResults();
   updateFiltersImmediately();
+  els.tagSearch.focus({ preventScroll: true });
 }
 
 function removeCatalogTag(event) {
@@ -664,6 +711,7 @@ function removeCatalogTag(event) {
 
 function renderSelectedCatalogTags() {
   els.selectedCatalogTags.replaceChildren();
+  els.selectedCatalogTags.classList.toggle("isEmpty", !state.selectedTags.length);
   if (!state.selectedTags.length) {
     const empty = document.createElement("span");
     empty.textContent = "尚未选择标签";

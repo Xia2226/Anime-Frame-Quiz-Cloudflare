@@ -111,8 +111,11 @@ export class QuizEngine {
     this.score += points;
     this.elapsedMs += boundedSpentMs;
 
+    const selectedOption = effectiveSelectedId === null ? null
+      : this.current.options?.find((option) => String(option.id) === String(effectiveSelectedId));
     const answer = {
       selectedId: effectiveSelectedId === null ? null : String(effectiveSelectedId),
+      selectedTitle: typeof selectedOption?.title === "string" ? selectedOption.title : "",
       answerId: String(this.current.answerId),
       isCorrect,
       points,

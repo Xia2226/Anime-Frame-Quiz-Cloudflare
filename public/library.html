@@ -5,9 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="动漫截图猜番图库资源统计，仅展示已收录截图的番剧。"
+      content="看图猜番图库资源与番剧截图统计，可按标题、标签、年份和评分筛选已收录动画。"
     />
-    <title>图库资源 · 动漫截图猜番</title>
+    <meta name="keywords" content="看图猜番图库,截图猜番资源,动漫截图,番剧图库,动画截图统计" />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="theme-color" content="#2477f2" />
+    <link rel="canonical" href="/library.html" />
+    <title>图库资源与番剧截图统计 | 看图猜番</title>
     <link rel="stylesheet" href="./library.css" />
   </head>
   <body>
@@ -102,9 +106,10 @@
               </div>
             </div>
             <div id="chartViewport" class="chartViewport">
-              <canvas id="annualChart" height="320" role="img">
+              <canvas id="annualChart" height="320" role="img" aria-describedby="chartSummary">
                 当前浏览器不支持 Canvas，无法绘制年度资源图表。
               </canvas>
+              <div id="chartTooltip" class="chartTooltip" role="status" hidden></div>
             </div>
             <p id="chartSummary" class="chartSummary"></p>
           </article>
@@ -116,7 +121,7 @@
                 <h2 id="tagsTitle">常见标签</h2>
               </div>
             </div>
-            <div id="topTags" class="topTags" aria-label="出现次数最多的标签"></div>
+            <div id="topTags" class="topTags" role="list" aria-label="出现次数最多的标签"></div>
             <p class="tagsHint">数字表示该标签覆盖的已收录番剧数量。</p>
           </aside>
         </section>
@@ -131,47 +136,29 @@
           </div>
 
           <form id="filterForm" class="filters" novalidate>
-            <label class="filterField searchField">
-              <span>标题搜索</span>
+            <div class="filterField searchField">
+              <label for="titleSearch">标题搜索</label>
               <div class="inputWithIcon">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <circle cx="11" cy="11" r="7" />
                   <path d="m16.5 16.5 4 4" />
                 </svg>
-                <input
-                  id="titleSearch"
-                  name="title"
-                  type="search"
-                  maxlength="100"
-                  autocomplete="off"
-                  placeholder="中文名、原名或 ID"
-                />
+                <input id="titleSearch" name="title" type="search" maxlength="100" autocomplete="off" placeholder="中文名、原名或 ID" />
               </div>
-            </label>
+            </div>
 
             <div class="filterField tagSearchField">
               <span>标签搜索</span>
-              <div class="tagSearchBox">
-                <input
-                  id="tagSearch"
-                  name="tagSearch"
-                  type="search"
-                  maxlength="60"
-                  autocomplete="off"
-                  placeholder="输入至少 2 个字符选择标签"
-                />
+              <div class="tagSearchControl">
+                <select id="tagModeFilter" name="tagMode" aria-label="标签匹配方式">
+                  <option value="any">任一</option>
+                  <option value="all">全部</option>
+                </select>
+                <div id="selectedCatalogTags" class="selectedCatalogTags" role="group" aria-label="已选择标签"><span>尚未选择标签</span></div>
+                <input id="tagSearch" name="tagSearch" type="search" maxlength="60" autocomplete="off" placeholder="输入至少 2 个字符" aria-controls="tagSearchResults" />
                 <div id="tagSearchResults" class="libraryTagResults" hidden></div>
               </div>
-              <div id="selectedCatalogTags" class="selectedCatalogTags"><span>尚未选择标签</span></div>
             </div>
-
-            <label class="filterField tagModeField">
-              <span>标签匹配</span>
-              <select id="tagModeFilter" name="tagMode">
-                <option value="any">匹配任一</option>
-                <option value="all">匹配全部</option>
-              </select>
-            </label>
 
             <label class="filterField">
               <span>首播年份</span>
@@ -183,15 +170,9 @@
             <fieldset class="filterField scoreField" aria-describedby="scoreError">
               <legend>评分范围</legend>
               <div class="scoreInputs">
-                <label>
-                  <span class="visuallyHidden">最低评分</span>
-                  <input id="scoreMin" name="scoreMin" type="number" min="0" max="10" step="0.1" placeholder="最低" />
-                </label>
+                <label><span class="visuallyHidden">最低评分</span><input id="scoreMin" name="scoreMin" type="number" min="0" max="10" step="0.1" placeholder="最低" /></label>
                 <span aria-hidden="true">—</span>
-                <label>
-                  <span class="visuallyHidden">最高评分</span>
-                  <input id="scoreMax" name="scoreMax" type="number" min="0" max="10" step="0.1" placeholder="最高" />
-                </label>
+                <label><span class="visuallyHidden">最高评分</span><input id="scoreMax" name="scoreMax" type="number" min="0" max="10" step="0.1" placeholder="最高" /></label>
               </div>
               <small id="scoreError" class="fieldError" role="alert"></small>
             </fieldset>
@@ -211,13 +192,14 @@
             </label>
 
             <label class="filterField pageSizeField">
-              <span>每页显示</span>
+              <span>每页</span>
               <select id="pageSize" name="pageSize">
                 <option value="25">25 条</option>
                 <option value="50" selected>50 条</option>
                 <option value="100">100 条</option>
               </select>
             </label>
+            <button class="visuallyHidden" type="submit">应用筛选</button>
           </form>
 
           <div class="tableViewport">

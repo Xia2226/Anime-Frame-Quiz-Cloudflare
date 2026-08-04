@@ -56,6 +56,16 @@ export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
     try {
+      if (url.pathname === "/robots.txt") {
+        requireMethod(request, "GET");
+        return createRobotsResponse(url);
+      }
+
+      if (url.pathname === "/sitemap.xml") {
+        requireMethod(request, "GET");
+        return createSitemapResponse(url);
+      }
+
       if (url.pathname === "/api/hard/sources") {
         requireMethod(request, "POST");
         const body = await readJsonBody(request, 64 * 1024);
@@ -133,6 +143,37 @@ export default {
   },
 };
 
+function createRobotsResponse(url) {
+  const sitemapUrl = new URL("/sitemap.xml", url).href;
+  return withSecurityHeaders(new Response([
+    "User-agent: *",
+    "Allow: /",
+    "Disallow: /api/",
+    `Sitemap: ${sitemapUrl}`,
+    "",
+  ].join("\n"), {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "public, max-age=3600, s-maxage=86400",
+    },
+  }));
+}
+
+function createSitemapResponse(url) {
+  const homeUrl = new URL("/", url).href;
+  const libraryUrl = new URL("/library.html", url).href;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>${homeUrl}</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>${libraryUrl}</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+</urlset>`;
+  return withSecurityHeaders(new Response(xml, {
+    headers: {
+      "Content-Type": "application/xml; charset=utf-8",
+      "Cache-Control": "public, max-age=3600, s-maxage=86400",
+    },
+  }));
+}
 function requireMethod(request, expected) {
   if (request.method !== expected) {
     const error = httpError(405, `仅支持 ${expected} 请求`);
