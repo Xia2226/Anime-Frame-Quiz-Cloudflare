@@ -32,7 +32,3 @@ Thumbs.db
 # Java residue
 target/
 pom.xml
-
-# Search-engine ownership verification files (deployed locally, never committed)
-public/baidu_verify_codeva-MG0KMgkAlv.html
-public/shenma-site-verification.txt

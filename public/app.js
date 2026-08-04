@@ -108,6 +108,7 @@ function bindEvents() {
   els.freeFilterCloseButton.addEventListener('click', closeFreeFilter);
   els.freeFilterResetButton.addEventListener('click', resetFreeFilter);
   els.freeFilterForm.addEventListener('input', updateFreeFilterPreview);
+  els.freeTagMode.addEventListener('change', updateFreeFilterPreview);
   els.freeFilterForm.addEventListener('submit', startFilteredGame);
   els.freeTagSearch.addEventListener('focus', renderTagSearch);
   els.freeTagSearch.addEventListener('input', renderTagSearch);
