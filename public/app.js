@@ -9,7 +9,7 @@ const GAME_GUIDE_STORAGE = 'anime-frame-quiz.game-guide-seen.v1';
 const LOCAL_COUNT = GAME_CONFIG.localQuestionCount;
 const LOCAL_MAX_SCORE = LOCAL_COUNT * Math.max(...GAME_CONFIG.scoreThresholds.map((tier) => tier.points));
 const DEFAULT_FREE_FILTER = Object.freeze({
-  titleQuery: '', startDate: '', endDate: '', minScore: null, maxScore: null,
+  startDate: '', endDate: '', minScore: null, maxScore: null,
   maxRank: null, minRatings: null, minDone: null, minImages: 1, tags: [], tagMode: 'any',
 });
 const MODE_META = {
@@ -42,7 +42,7 @@ const ids = [
   'homeLeaderboardModal', 'homeLeaderboardCloseButton', 'homeLeaderboardClassicTab',
   'homeLeaderboardHardTab', 'homeLeaderboardDay', 'homeLeaderboardStatus', 'homeLeaderboardBody',
   'gameGuideModal', 'gameGuideCloseButton',
-  'freeFilterModal', 'freeFilterCloseButton', 'freeFilterForm', 'freeTitleQuery',
+  'freeFilterModal', 'freeFilterCloseButton', 'freeFilterForm',
   'freeStartDate', 'freeEndDate', 'freeMinScore', 'freeMaxScore', 'freeMaxRank',
   'freeMinRatings', 'freeMinDone', 'freeMinImages', 'freeTagMode', 'freeTagSearch', 'freeTagResults',
   'freeSelectedTags', 'freeMatchCount', 'freeFilterMessage', 'freeFilterResetButton',
@@ -114,7 +114,7 @@ function bindEvents() {
   els.freeTagResults.addEventListener('click', chooseTag);
   els.freeSelectedTags.addEventListener('click', removeTag);
   document.addEventListener('pointerdown', (event) => {
-    if (!event.target.closest('.freeTagPicker')) els.freeTagResults.classList.add('hidden');
+    if (!event.target.closest('.freeTagPicker') && !els.freeTagResults.contains(event.target)) els.freeTagResults.classList.add('hidden');
   });
   els.freeFilterModal.addEventListener('click', (event) => {
     if (event.target === els.freeFilterModal) closeFreeFilter();
@@ -308,7 +308,7 @@ async function beginClassic() {
   try {
     const catalog = await ensureCatalog();
     if (token !== state.launchToken || state.mode !== 'classic') return;
-    startLocalEngine('classic', catalog, filterAnime(catalog, {}));
+    startLocalEngine('classic', catalog, filterAnime(catalog, { minRatings: 1000 }));
   } catch (error) {
     if (token === state.launchToken) renderEngineError(error, () => void beginClassic());
   }
@@ -317,12 +317,11 @@ async function beginClassic() {
 async function beginFreeEntry() {
   const token = ++state.launchToken;
   stopGame();
-  showGameShell('free');
   state.freeFilterInitial = true;
   openFreeFilter(true);
   try {
     await ensureCatalog();
-    if (token !== state.launchToken || state.mode !== 'free') return;
+    if (token !== state.launchToken) return;
     updateFreeFilterPreview();
     renderTagSearch();
   } catch (error) {
@@ -658,7 +657,7 @@ function openFreeFilter(initial) {
   els.freeTagResults.replaceChildren();
   els.freeTagResults.classList.add('hidden');
   updateFreeFilterPreview();
-  openModal(els.freeFilterModal, els.freeTitleQuery);
+  openModal(els.freeFilterModal, els.freeStartDate);
 }
 
 function restartFromFreeFilter() {
@@ -679,7 +678,6 @@ function closeFreeFilter() {
 }
 
 function populateFreeFilter(filter) {
-  els.freeTitleQuery.value = filter.titleQuery || '';
   els.freeStartDate.value = filter.startDate || '';
   els.freeEndDate.value = filter.endDate || '';
   writeOptionalInput(els.freeMinScore, filter.minScore);
@@ -703,7 +701,6 @@ function resetFreeFilter() {
 
 function readFreeFilter() {
   return {
-    titleQuery: els.freeTitleQuery.value.trim(),
     startDate: els.freeStartDate.value,
     endDate: els.freeEndDate.value,
     minScore: readOptionalNumber(els.freeMinScore),
@@ -757,7 +754,7 @@ function startFilteredGame(event) {
   const filter = readFreeFilter();
   state.freeFilter = { ...filter, tags: [...filter.tags] };
   state.freeFilterInitial = false;
-  closeModal(els.freeFilterModal);
+  showGameShell('free');
   state.launchToken += 1;
   startLocalEngine('free', state.catalog, state.freeEligible);
 }
@@ -782,6 +779,22 @@ function renderTagSearch() {
       button.textContent = `${item.name}（${item.animeCount} 部）`;
       els.freeTagResults.append(button);
     }
+  }
+  showTagSearchResults();
+}
+
+function showTagSearchResults() {
+  const rect = els.freeTagSearch.getBoundingClientRect();
+  const style = els.freeTagResults.style;
+  style.position = 'fixed';
+  style.left = `${rect.left}px`;
+  style.top = `${rect.bottom + 7}px`;
+  style.right = 'auto';
+  style.width = `${Math.max(rect.width, 260)}px`;
+  style.maxHeight = `${Math.max(120, Math.min(280, window.innerHeight - rect.bottom - 18))}px`;
+  style.zIndex = '200';
+  if (els.freeTagResults.parentElement !== document.body) {
+    document.body.appendChild(els.freeTagResults);
   }
   els.freeTagResults.classList.remove('hidden');
 }

@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -15,6 +15,19 @@ const IMAGE_BASE = "https://cdni.fancaps.net/file/fancaps-animeimages/";
 const IMAGE_PATTERN = /^https:\/\/cdni\.fancaps\.net\/file\/fancaps-animeimages\/(\d+)\.jpg(?:[?#].*)?$/i;
 const SUBJECT_ID_PATTERN = /^\s*\{\s*"id"\s*:\s*(\d+)(?:\s*,|\s*\})/;
 const MIN_ANIME = 50;
+const BANGUMI_USER_AGENT = "AnimeFrameQuiz/1.0 (https://github.com/Xia2226/Anime-Frame-Quiz-Cloudflare)";
+const COVER_CONCURRENCY = 12;
+const COVER_HOST = "lain.bgm.tv";
+const COVER_FETCH_RETRIES = 3;
+const COVER_RETRY_DELAY_MS = [800, 2000, 4000];
+const COVER_MAX_BYTES = 5 * 1024 * 1024;
+const COVERS_DIR = resolve(ROOT, "public/data/covers");
+const COVER_LOCAL_BASE = "/data/covers";
+const DEFAULT_PROXY_URL = "http://127.0.0.1:10808";
+const COVER_SKIP = process.env.NO_COVER_FETCH === "1";
+
+let proxyDispatcher = null;
+let proxyDispatcherResolved = false;
 const ADULT_EXACT_TAGS = new Set([
   "里番", "色情", "r18", "r-18", "r18+", "r-18+", "r18g", "r-18g",
   "18禁", "十八禁", "工口", "h", "hentai", "ecchi", "ero", "erotic",
@@ -29,7 +42,7 @@ const ADULT_TAG_PATTERNS = [
 ];
 const ANIME_KEYS = [
   "bgmId", "anidbId", "title", "originalTitle", "date", "score", "rank",
-  "nsfw", "doneCount", "ratingCount", "tags", "metaTags", "imageIds",
+  "nsfw", "doneCount", "ratingCount", "tags", "metaTags", "imageIds", "cover",
 ];
 
 const options = parseArguments(process.argv.slice(2));
@@ -135,8 +148,9 @@ async function build(paths) {
   );
   assert(subjects.size === cleaned.rows.length, "Bangumi 连接条数与题库条数不一致");
 
+  const covers = COVER_SKIP ? new Map() : await fetchBangumiCovers([...wanted]);
   const joinedAnime = cleaned.rows
-    .map((row) => makeAnime(row, subjects.get(row.bgmId)))
+    .map((row) => makeAnime(row, subjects.get(row.bgmId), covers.get(row.bgmId) || ""))
     .sort((a, b) => a.anidbId - b.anidbId || a.bgmId - b.bgmId);
   const adultContent = [];
   const anime = [];
@@ -146,6 +160,7 @@ async function build(paths) {
     else anime.push(item);
   }
   assert(anime.length >= MIN_ANIME, `成人内容过滤后仅有 ${anime.length} 部番剧`);
+  if (!COVER_SKIP) await cleanOrphanCovers(new Set(anime.map((item) => item.bgmId)));
   const tags = buildTagCatalog(anime);
   const imageCount = anime.reduce((sum, item) => sum + item.imageIds.length, 0);
   const library = {
@@ -175,6 +190,7 @@ async function build(paths) {
       "从保留记录中删除跨 AniDB ID 共享的图片 ID，并隔离因此无图的记录",
       "要求每条保留记录都连接到唯一且 type=2 的 Bangumi subject",
       "剔除 nsfw 或带高置信成人标签的番剧；单独出现卖肉、肉、福利、杀必死时保留",
+      "为每条番剧从 Bangumi 下载封面预览图到 public/data/covers，题库中写入本地路径；个别下载失败时回退为远程 URL，全部失败或跳过时留空",
     ],
     summary: {
       ...fancapsStats,
@@ -194,6 +210,7 @@ async function build(paths) {
       adultContentImageCount: adultContent.reduce((sum, item) => sum + item.imageCount, 0),
       finalAnimeCount: anime.length,
       finalImageCount: imageCount,
+      coverCount: anime.reduce((sum, item) => sum + (item.cover ? 1 : 0), 0),
     },
     quarantine: {
       crossAnidbShowUrls: cleaned.crossAnidbShowUrls,
@@ -345,7 +362,7 @@ function normalizeSubject(value) {
   };
 }
 
-function makeAnime(row, subject) {
+function makeAnime(row, subject, cover) {
   const title = row.title || subject.title || subject.originalTitle;
   assert(title, `Bangumi ID ${row.bgmId} 缺少可用标题`);
   return {
@@ -362,7 +379,203 @@ function makeAnime(row, subject) {
     tags: subject.tags,
     metaTags: subject.metaTags,
     imageIds: row.imageIds,
+    cover,
   };
+}
+
+async function fetchBangumiCovers(bgmIds) {
+  const covers = new Map();
+  const uniqueIds = [...new Set(bgmIds)].filter(Number.isFinite).sort(numeric);
+  if (uniqueIds.length === 0) return covers;
+
+  console.error(`[cover] 正在从 Bangumi 下载封面预览图到本地（${uniqueIds.length} 部，并发 ${COVER_CONCURRENCY}）…`);
+  const dispatcher = await getProxyDispatcher();
+  await mkdir(COVERS_DIR, { recursive: true });
+  const existing = new Set(
+    (await readdir(COVERS_DIR).catch(() => [])).filter((name) => /^\d+\.jpg$/i.test(name)),
+  );
+
+  let cursor = 0;
+  let completed = 0;
+  let fallbackRemote = 0;
+  let firstFailureDetail = "";
+  const failedIds = [];
+
+  const worker = async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= uniqueIds.length) return;
+      const id = uniqueIds[index];
+      const result = await fetchSubjectCover(id, dispatcher);
+      if (result.url) {
+        const saved = await downloadCover(id, result.url, dispatcher, existing);
+        if (saved.localPath) {
+          covers.set(id, saved.localPath);
+        } else if (saved.remoteUrl) {
+          covers.set(id, saved.remoteUrl);
+          fallbackRemote += 1;
+        } else {
+          if (!firstFailureDetail) firstFailureDetail = saved.error;
+          failedIds.push(id);
+        }
+      } else if (result.error) {
+        if (!firstFailureDetail) firstFailureDetail = result.error;
+        failedIds.push(id);
+      }
+      completed += 1;
+      if (completed % 200 === 0 || completed === uniqueIds.length) {
+        console.error(
+          `[cover] 进度 ${completed}/${uniqueIds.length}（本地封面 ${covers.size - fallbackRemote} 部，远程兜底 ${fallbackRemote} 部）`,
+        );
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: COVER_CONCURRENCY }, () => worker()));
+
+  if (failedIds.length === 0) {
+    console.error(`[cover] 封面下载完成：${covers.size}/${uniqueIds.length} 部`);
+  } else {
+    console.error(`[cover] ${failedIds.length} 部获取失败：${failedIds.slice(0, 10).join(", ")}${failedIds.length > 10 ? "…" : ""}`);
+    console.error(`[cover] 失败原因示例：${firstFailureDetail}`);
+    if (failedIds.length === uniqueIds.length) {
+      console.error(
+        "[cover] 提示：全部失败，多为网络/代理问题。若浏览器能访问 api.bgm.tv 而脚本失败，"
+        + "请检查代理端口（HTTPS_PROXY=http://127.0.0.1:<端口>），或临时用 NO_COVER_FETCH=1 跳过封面。",
+      );
+    }
+  }
+  return covers;
+}
+
+async function fetchSubjectCover(subjectId, dispatcher) {
+  const schemes = ["https:", "http:"];
+  let lastDetail = "";
+  for (let attempt = 0; attempt < COVER_FETCH_RETRIES; attempt += 1) {
+    for (const scheme of schemes) {
+      const url = `${scheme}//api.bgm.tv/v0/subjects/${subjectId}`;
+      try {
+        const response = await fetch(url, {
+          headers: { "User-Agent": BANGUMI_USER_AGENT },
+          ...(dispatcher ? { dispatcher } : {}),
+        });
+        if (!response.ok) {
+          if (response.status === 404) return { url: "", error: "" };
+          const snippet = (await response.text()).slice(0, 150);
+          throw new Error(`HTTP ${response.status}${snippet ? `: ${snippet}` : ""}`);
+        }
+        const raw = await response.text();
+        let body;
+        try {
+          body = JSON.parse(raw);
+        } catch {
+          throw new Error(`响应不是 JSON: ${raw.slice(0, 150)}`);
+        }
+        const cover = normalizeCover(body?.images?.small) || normalizeCover(body?.images?.medium);
+        return cover ? { url: cover, error: "" } : { url: "", error: "" };
+      } catch (error) {
+        lastDetail = describeFetchError(error);
+      }
+    }
+    if (attempt < COVER_FETCH_RETRIES - 1) await sleep(COVER_RETRY_DELAY_MS[attempt] ?? 2000);
+  }
+  return { url: "", error: lastDetail };
+}
+
+async function downloadCover(subjectId, coverUrl, dispatcher, existing) {
+  const fileName = `${subjectId}.jpg`;
+  const filePath = resolve(COVERS_DIR, fileName);
+  if (existing.has(fileName)) return { localPath: `${COVER_LOCAL_BASE}/${fileName}`, error: "" };
+
+  const schemes = ["https:", "http:"];
+  let lastDetail = "";
+  for (let attempt = 0; attempt < COVER_FETCH_RETRIES; attempt += 1) {
+    for (const scheme of schemes) {
+      const url = coverUrl.replace(/^https?:/, scheme);
+      try {
+        const response = await fetch(url, {
+          headers: { "User-Agent": BANGUMI_USER_AGENT },
+          ...(dispatcher ? { dispatcher } : {}),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const contentType = response.headers.get("content-type") || "";
+        const buffer = Buffer.from(await response.arrayBuffer());
+        if (buffer.length === 0) throw new Error("空响应");
+        if (buffer.length > COVER_MAX_BYTES) throw new Error(`图片过大（${buffer.length} 字节）`);
+        if (contentType && !contentType.startsWith("image/")) throw new Error(`Content-Type 非图片：${contentType}`);
+        await writeFile(filePath, buffer);
+        return { localPath: `${COVER_LOCAL_BASE}/${fileName}`, error: "" };
+      } catch (error) {
+        lastDetail = describeFetchError(error);
+      }
+    }
+    if (attempt < COVER_FETCH_RETRIES - 1) await sleep(COVER_RETRY_DELAY_MS[attempt] ?? 2000);
+  }
+  return { remoteUrl: coverUrl, error: lastDetail };
+}
+
+async function cleanOrphanCovers(liveIds) {
+  const names = await readdir(COVERS_DIR).catch(() => []);
+  const orphans = names.filter((name) => {
+    const id = Number(/^(\d+)\.jpg$/i.exec(name)?.[1]);
+    return Number.isFinite(id) && !liveIds.has(id);
+  });
+  if (orphans.length === 0) return;
+  await Promise.all(orphans.map((name) => rm(resolve(COVERS_DIR, name), { force: true }).catch(() => {})));
+  console.error(`[cover] 已清理 ${orphans.length} 个失效封面文件`);
+}
+
+function describeFetchError(error) {
+  const cause = error?.cause;
+  const code = cause?.code || "";
+  const syscall = cause?.syscall || "";
+  const host = cause?.host || "";
+  const extra = [code, syscall, host].filter(Boolean).join(" · ");
+  return extra ? `${error?.message ?? error}（${extra}）` : String(error?.message ?? error);
+}
+
+async function getProxyDispatcher() {
+  if (proxyDispatcherResolved) return proxyDispatcher;
+  proxyDispatcherResolved = true;
+  const fromEnv = process.env.HTTPS_PROXY || process.env.https_proxy
+    || process.env.HTTP_PROXY || process.env.http_proxy
+    || process.env.ALL_PROXY || process.env.all_proxy;
+  const proxyUrl = fromEnv || DEFAULT_PROXY_URL;
+  try {
+    const { ProxyAgent } = await import("undici");
+    proxyDispatcher = new ProxyAgent(proxyUrl);
+    console.error(
+      `[cover] 封面请求将经代理访问：${proxyUrl}${fromEnv ? "" : "（默认值）"}`,
+    );
+    return proxyDispatcher;
+  } catch (error) {
+    console.error(`[cover] 代理配置不可用（${proxyUrl}），将直连访问：${error.message}`);
+    return null;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeCover(value) {
+  const raw = text(value, 500);
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.hostname.toLowerCase() !== COVER_HOST) {
+      return "";
+    }
+    url.protocol = "https:";
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function isLocalCoverPath(value) {
+  return /^\/data\/covers\/\d+\.(?:jpe?g|png|webp)$/i.test(value);
 }
 
 function classifyAdultContent(item) {
@@ -468,6 +681,10 @@ function validateLibrary(value) {
     nonNegative(item.ratingCount, `${label}.ratingCount`);
     tagNames(item.tags, `${label}.tags`);
     tagNames(item.metaTags, `${label}.metaTags`);
+    assert(
+      item.cover === "" || isLocalCoverPath(item.cover) || normalizeCover(item.cover) === item.cover,
+      `${label}.cover 未规范化（应为本地封面路径或有效的 lain.bgm.tv URL）`,
+    );
     const adultClassification = classifyAdultContent(item);
     assert(!adultClassification, `${label} 命中成人内容规则：${adultClassification?.matchedTags.join("、") || "nsfw"}`);
 
@@ -532,6 +749,10 @@ function validateQuarantine(value, library) {
   );
   assert(value.summary.finalAnimeCount === count, "finalAnimeCount 不一致");
   assert(value.summary.finalImageCount === library.stats.imageCount, "finalImageCount 不一致");
+  assert(
+    value.summary.coverCount === library.anime.reduce((sum, item) => sum + (item.cover ? 1 : 0), 0),
+    "coverCount 不一致",
+  );
 
   assert(
     value.summary.crossAnidbShowUrlCount === value.quarantine.crossAnidbShowUrls.length,
@@ -847,6 +1068,7 @@ async function report(mode, paths, library) {
     animeCount: library.stats.animeCount,
     imageCount: library.stats.imageCount,
     tagCount: library.stats.tagCount,
+    coverCount: library.anime.reduce((sum, item) => sum + (item.cover ? 1 : 0), 0),
     output: { path: projectPath(paths.output), ...output },
     quarantine: { path: projectPath(paths.quarantine), ...quarantine },
   }, null, 2));

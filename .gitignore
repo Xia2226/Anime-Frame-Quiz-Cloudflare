@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 .wrangler/
 .dev.vars
@@ -10,6 +10,9 @@ node_modules/
 resources/fancaps_anime_images.jsonl
 resources/subject.jsonlines
 .tmp-workers-types/
+
+# Generated cover images (rebuilt via npm run build:data)
+public/data/covers/
 
 # Local test images
 images/

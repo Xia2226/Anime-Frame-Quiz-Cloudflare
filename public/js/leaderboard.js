@@ -1,5 +1,5 @@
 const PARTICIPANT_STORAGE_KEY = "anime-frame-quiz.participant-id.v1";
-const PROFILE_SESSION_KEY = "anime-frame-quiz.leaderboard-profile.v1";
+const PROFILE_STORAGE_KEY = "anime-frame-quiz.leaderboard-profile.v1";
 
 let memoryParticipantId = "";
 let memoryProfile = { resolved: false, username: "" };
@@ -26,7 +26,7 @@ export function getParticipantId() {
 
 export function readLeaderboardProfile() {
   try {
-    const stored = JSON.parse(sessionStorage.getItem(PROFILE_SESSION_KEY) || "null");
+    const stored = JSON.parse(localStorage.getItem(PROFILE_STORAGE_KEY) || "null");
     if (stored && stored.resolved === true) {
       memoryProfile = { resolved: true, username: normalizeUsername(stored.username) };
     }
@@ -39,7 +39,7 @@ export function readLeaderboardProfile() {
 export function saveLeaderboardProfile(username) {
   memoryProfile = { resolved: true, username: normalizeUsername(username) };
   try {
-    sessionStorage.setItem(PROFILE_SESSION_KEY, JSON.stringify(memoryProfile));
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(memoryProfile));
   } catch {
     // The prompt will still stay resolved for this page lifetime.
   }

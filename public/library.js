@@ -63,6 +63,7 @@ const els = {
   scoreError: document.querySelector("#scoreError"),
   sortOrder: document.querySelector("#sortOrder"),
   pageSize: document.querySelector("#pageSize"),
+  resetFilters: document.querySelector("#resetFilters"),
   resultSummary: document.querySelector("#resultSummary"),
   catalogBody: document.querySelector("#catalogBody"),
   previousPage: document.querySelector("#previousPage"),
@@ -83,7 +84,7 @@ function initialize() {
   document.addEventListener("pointerdown", (event) => {
     if (!event.target.closest(".tagSearchControl")) els.tagSearchResults.hidden = true;
   });
-  els.tagModeFilter.addEventListener("change", updateFiltersImmediately);
+  els.tagModeFilter.addEventListener("click", toggleTagMode);
   els.scoreMin.addEventListener("input", scheduleFilterUpdate);
   els.scoreMax.addEventListener("input", scheduleFilterUpdate);
   els.yearFilter.addEventListener("change", updateFiltersImmediately);
@@ -96,6 +97,7 @@ function initialize() {
   });
   els.previousPage.addEventListener("click", () => goToPage(state.page - 1));
   els.nextPage.addEventListener("click", () => goToPage(state.page + 1));
+  els.resetFilters.addEventListener("click", resetFilters);
   els.annualChart.addEventListener("pointermove", showChartTooltip);
   els.annualChart.addEventListener("pointerleave", hideChartTooltip);
   els.chartViewport.addEventListener("scroll", hideChartTooltip, { passive: true });
@@ -237,6 +239,7 @@ function normalizeAnime(item, index) {
   const rank = readPositiveInteger(item.rank);
   const doneCount = readNonNegativeInteger(item.doneCount);
   const ratingCount = readNonNegativeInteger(item.ratingCount);
+  const cover = normalizeCoverUrl(item.cover);
 
   return {
     _index: index,
@@ -255,8 +258,16 @@ function normalizeAnime(item, index) {
     allTags,
     searchTags: new Set(allTags.map(normalizeSearchText)),
     imageCount: imageIds.size,
+    cover,
     searchKey: normalizeSearchText([title, originalTitle, bgmId, anidbId].filter(Boolean).join(" ")),
   };
+}
+
+function normalizeCoverUrl(value) {
+  if (typeof value !== "string") return "";
+  const url = value.trim();
+  if (/^\/data\/covers\/\d+\.(?:jpe?g|png|webp)$/i.test(url)) return url;
+  return /^https:\/\/lain\.bgm\.tv\//i.test(url) ? url.slice(0, 500) : "";
 }
 
 function normalizeVersion(value) {
@@ -496,7 +507,7 @@ function drawAnnualChart() {
   }
 
   const compact = window.matchMedia("(max-width: 640px)").matches;
-  const cssHeight = compact ? 290 : 320;
+  const cssHeight = compact ? 270 : 300;
   const viewportWidth = Math.max(280, els.chartViewport.clientWidth || 280);
   const cssWidth = Math.max(viewportWidth, state.yearStats.length * 48 + 108);
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
@@ -657,6 +668,35 @@ function updateFiltersImmediately() {
   applyCatalogFilters();
 }
 
+function toggleTagMode() {
+  const nextMode = els.tagModeFilter.dataset.mode === "all" ? "any" : "all";
+  els.tagModeFilter.dataset.mode = nextMode;
+  els.tagModeFilter.textContent = nextMode === "all" ? "匹配全部" : "匹配任一";
+  els.tagModeFilter.setAttribute("aria-pressed", String(nextMode === "all"));
+  updateFiltersImmediately();
+}
+
+function resetFilters() {
+  els.titleSearch.value = "";
+  els.tagSearch.value = "";
+  state.selectedTags = [];
+  state.page = 1;
+  state.pageSize = 50;
+  els.tagModeFilter.dataset.mode = "any";
+  els.tagModeFilter.textContent = "匹配任一";
+  els.tagModeFilter.setAttribute("aria-pressed", "false");
+  els.yearFilter.value = "";
+  els.scoreMin.value = "";
+  els.scoreMax.value = "";
+  els.scoreError.textContent = "";
+  els.sortOrder.value = "score-desc";
+  els.pageSize.value = "50";
+  els.tagSearchResults.hidden = true;
+  renderSelectedCatalogTags();
+  renderTagSearchResults();
+  updateFiltersImmediately();
+}
+
 function renderTagSearchResults() {
   els.tagSearchResults.replaceChildren();
   const query = normalizeSearchText(els.tagSearch.value);
@@ -739,7 +779,7 @@ function applyCatalogFilters() {
   const searchTerm = normalizeSearchText(els.titleSearch.value);
   const year = els.yearFilter.value;
   const selectedTags = state.selectedTags.map(normalizeSearchText);
-  const matchAllTags = els.tagModeFilter.value === "all";
+  const matchAllTags = els.tagModeFilter.dataset.mode === "all";
   const filtered = state.anime.filter((item) => {
     if (searchTerm && !item.searchKey.includes(searchTerm)) return false;
     if (year && item.year !== year) return false;
@@ -859,19 +899,41 @@ function createTitleCell(item) {
   const cell = document.createElement("td");
   cell.className = "titleCell";
   cell.dataset.label = "番剧";
+
+  const layout = document.createElement("div");
+  layout.className = "titleCellLayout";
+
+  if (item.cover) {
+    const thumb = document.createElement("img");
+    thumb.className = "coverThumb";
+    thumb.src = item.cover;
+    thumb.alt = "";
+    thumb.loading = "lazy";
+    thumb.decoding = "async";
+    thumb.referrerPolicy = "no-referrer";
+    thumb.addEventListener("error", () => thumb.remove());
+    layout.append(thumb);
+  }
+
+  const texts = document.createElement("div");
+  texts.className = "titleCellTexts";
+
   const title = document.createElement("strong");
   title.textContent = item.title;
   title.title = item.title;
-  cell.append(title);
+  texts.append(title);
   if (item.originalTitle) {
     const original = document.createElement("span");
     original.textContent = item.originalTitle;
     original.title = item.originalTitle;
-    cell.append(original);
+    texts.append(original);
   }
   const ids = document.createElement("small");
   ids.textContent = `Bangumi ${item.bgmId || "—"} · AniDB ${item.anidbId || "—"}`;
-  cell.append(ids);
+  texts.append(ids);
+
+  layout.append(texts);
+  cell.append(layout);
   return cell;
 }
 

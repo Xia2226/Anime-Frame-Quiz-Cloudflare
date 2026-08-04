@@ -94,7 +94,7 @@ select {
 .libraryShell {
   width: min(1440px, calc(100% - 40px));
   margin: 0 auto;
-  padding: 28px 0 56px;
+  padding: 30px 0 56px;
 }
 
 .hero {
@@ -103,7 +103,7 @@ select {
   grid-template-columns: minmax(130px, 1fr) minmax(320px, 760px) minmax(130px, 1fr);
   align-items: start;
   gap: 24px;
-  padding: 22px 0 34px;
+  padding: 18px 0 26px;
 }
 
 .homeLink {
@@ -164,7 +164,7 @@ select {
 }
 
 .heroCopy > p:last-child {
-  max-width: 680px;
+  max-width: 760px;
   margin: 16px auto 0;
   color: var(--muted);
   font-size: 15px;
@@ -173,13 +173,13 @@ select {
 
 .datasetBadge {
   justify-self: end;
-  min-width: 116px;
-  padding: 9px 13px;
+  min-width: 100px;
+  padding: 7px 10px;
   border: 1px solid rgba(36, 119, 242, 0.18);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--accent-soft);
   color: var(--accent-dark);
-  text-align: right;
+  text-align: center;
 }
 
 .datasetBadge span,
@@ -188,12 +188,12 @@ select {
 }
 
 .datasetBadge span {
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .datasetBadge strong {
-  margin-top: 2px;
-  font-size: 14px;
+  margin-top: 1px;
+  font-size: 12px;
 }
 
 .loadState {
@@ -275,7 +275,7 @@ select {
 }
 
 .overview {
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 .sectionHeading,
@@ -287,7 +287,7 @@ select {
 }
 
 .sectionHeading {
-  margin: 0 4px 15px;
+  margin: 0 4px 14px;
 }
 
 .sectionHeading h2,
@@ -372,7 +372,7 @@ select {
   display: grid;
   grid-template-columns: minmax(0, 2.25fr) minmax(260px, 0.75fr);
   gap: 16px;
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .panel {
@@ -422,7 +422,7 @@ select {
 
 #annualChart {
   display: block;
-  height: 320px;
+  height: 300px;
 }
 
 .chartSummary,
@@ -481,7 +481,7 @@ select {
   position: relative;
   z-index: 6;
   display: grid;
-  grid-template-columns: minmax(190px, 1.2fr) minmax(330px, 2.05fr) minmax(112px, .65fr) minmax(168px, .9fr) minmax(180px, 1fr) minmax(88px, .52fr);
+  grid-template-columns: minmax(190px, 1.2fr) minmax(190px, 1.2fr) minmax(112px, .65fr) minmax(168px, .9fr) minmax(132px, .75fr) minmax(88px, .52fr) auto;
   align-items: start;
   gap: 10px;
   margin: 18px 0;
@@ -492,6 +492,32 @@ select {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9);
 }
 
+.filterResetButton {
+  align-self: start;
+  justify-self: stretch;
+  margin-top: 21px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color .18s ease, border-color .18s ease;
+}
+
+.filterResetButton:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+}
+
+.filterResetButton:active {
+  background: #0f47a1;
+  border-color: #0f47a1;
+}
+
 .filterField {
   min-width: 0;
   margin: 0;
@@ -499,9 +525,9 @@ select {
   border: 0;
 }
 
-.filterField > span,
-.filterField > label,
-.filterField > legend {
+.filterField > span:not(.afq-select),
+.filterField > label:not(.afq-select),
+.filterField > legend:not(.afq-select) {
   display: block;
   width: auto;
   margin: 0 0 6px;
@@ -509,6 +535,7 @@ select {
   color: #475467;
   font-size: 11px;
   font-weight: 750;
+  text-align: center;
 }
 
 .filterField input,
@@ -566,11 +593,11 @@ select {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(36, 119, 242, .11);
 }
-.tagSearchControl select {
-  width: 72px;
-  flex: 0 0 72px;
+.tagModeToggle {
+  width: 88px;
+  flex: 0 0 88px;
   height: 38px;
-  padding: 0 22px 0 10px;
+  padding: 0 18px 0 18px;
   border: 0;
   border-right: 1px solid #e1e7f0;
   border-radius: 9px 0 0 9px;
@@ -579,6 +606,16 @@ select {
   box-shadow: none !important;
   font-size: 11px;
   font-weight: 800;
+  text-align: center;
+  text-align-last: center;
+  line-height: 38px;
+  appearance: none;
+  transition: color .16s ease, background .16s ease;
+}
+.tagModeToggle:hover { background: #dce9ff; }
+.tagModeToggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .tagSearchControl input {
   min-width: 90px;
@@ -624,31 +661,34 @@ select {
 
 .selectedCatalogTags {
   min-width: 0;
-  max-width: 132px;
+  grid-column: 1 / -1;
   display: flex;
-  flex: 0 1 auto;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  overflow-x: auto;
-  padding-left: 6px;
-  white-space: nowrap;
-  scrollbar-width: none;
+  gap: 5px;
 }
 .selectedCatalogTags::-webkit-scrollbar { display: none; }
 .selectedCatalogTags.isEmpty { display: none; }
 .selectedCatalogTags > span { display: none; }
 .selectedCatalogTags button {
-  max-width: 92px;
+  max-width: 130px;
   flex: 0 0 auto;
   overflow: hidden;
-  padding: 3px 7px;
+  padding: 4px 9px;
   border: 1px solid rgba(36, 119, 242, .16);
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent-dark);
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: background .16s ease, border-color .16s ease;
+}
+.selectedCatalogTags button:hover {
+  background: #dce9ff;
+  border-color: rgba(36, 119, 242, .28);
 }
 .scoreInputs {
   display: grid;
@@ -751,6 +791,28 @@ select {
   margin-top: 4px;
   color: #98a2b3;
   font-size: 9px;
+}
+
+.titleCellLayout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.titleCellTexts {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.coverThumb {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 62px;
+  border-radius: 6px;
+  background: #eef2f7;
+  box-shadow: 0 2px 6px rgba(33, 45, 74, 0.1);
+  object-fit: cover;
 }
 
 .scoreValue,
@@ -889,7 +951,7 @@ select {
   font-weight: 700;
   line-height: 1.55;
   text-align: center;
-  white-space: pre-line;
+  white-space: pre;
   pointer-events: none;
   transform: translate(-50%, calc(-100% - 10px));
 }
@@ -910,16 +972,11 @@ select {
   border-color: rgba(36, 119, 242, .34);
   box-shadow: 0 7px 16px rgba(36, 119, 242, .1);
 }
-.tableViewport {
-  max-height: min(72vh, 760px);
-  overflow: auto;
-  scrollbar-gutter: stable;
-}
 .catalogTable { min-width: 1160px; }
 .catalogTable th,
-.catalogTable td { padding: 15px 14px; }
-.catalogTable th { font-size: 12px; }
-.catalogTable td { font-size: 13px; }
+.catalogTable td { padding: 16px 14px; }
+.catalogTable th { font-size: 13px; }
+.catalogTable td { font-size: 14px; }
 .catalogTable th:first-child { width: 30%; }
 .catalogTable th:nth-child(2) { width: 9%; }
 .catalogTable th:nth-child(3) { width: 7%; }
@@ -928,11 +985,11 @@ select {
 .catalogTable th:nth-child(6) { width: 9%; }
 .catalogTable th:nth-child(7) { width: 7%; }
 .catalogTable th:last-child { width: 23%; }
-.titleCell strong { font-size: 15px; }
-.titleCell span { margin-top: 3px; font-size: 12px; }
-.titleCell small { margin-top: 5px; font-size: 10px; }
+.titleCell strong { font-size: 16px; }
+.titleCell span { margin-top: 3px; font-size: 13px; }
+.titleCell small { margin-top: 5px; font-size: 11px; }
 .rowTags { gap: 5px; }
-.rowTag { max-width: 116px; padding: 4px 7px; border-radius: 6px; font-size: 10px; }
+.rowTag { max-width: 120px; padding: 4px 7px; border-radius: 6px; font-size: 11px; }
 :is(.chartViewport, .tableViewport, .libraryTagResults) {
   scrollbar-width: thin;
   scrollbar-color: #b7c3d5 transparent;
@@ -958,6 +1015,10 @@ select {
 
   .filters {
     grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+
+  .filterResetButton {
+    justify-self: start;
   }
 
   .pageSizeField {
@@ -1067,6 +1128,10 @@ select {
     padding: 12px;
   }
 
+  .filterResetButton {
+    justify-self: stretch;
+  }
+
   .searchField,
   .tagSearchField {
     grid-column: auto;
@@ -1144,6 +1209,11 @@ select {
   .catalogTable .titleCell {
     display: block;
     text-align: left;
+  }
+
+  .catalogTable .titleCell .coverThumb {
+    width: 40px;
+    height: 56px;
   }
 
   .catalogTable .titleCell::before,

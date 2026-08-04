@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-08-04T03:27:35.749Z",
+  "generatedAt": "2026-08-04T12:33:17.808Z",
   "sources": {
     "fancaps": {
       "path": "resources/fancaps_anime_images.jsonl",
@@ -17,7 +17,8 @@
     "在剩余记录中隔离同一 AniDB ID 对应多行的整个组",
     "从保留记录中删除跨 AniDB ID 共享的图片 ID，并隔离因此无图的记录",
     "要求每条保留记录都连接到唯一且 type=2 的 Bangumi subject",
-    "剔除 nsfw 或带高置信成人标签的番剧；单独出现卖肉、肉、福利、杀必死时保留"
+    "剔除 nsfw 或带高置信成人标签的番剧；单独出现卖肉、肉、福利、杀必死时保留",
+    "为每条番剧从 Bangumi 下载封面预览图到 public/data/covers，题库中写入本地路径；个别下载失败时回退为远程 URL，全部失败或跳过时留空"
   ],
   "summary": {
     "linesScanned": 6604,
@@ -42,7 +43,8 @@
     "adultContentCount": 85,
     "adultContentImageCount": 3895,
     "finalAnimeCount": 2042,
-    "finalImageCount": 129172
+    "finalImageCount": 129172,
+    "coverCount": 2042
   },
   "quarantine": {
     "crossAnidbShowUrls": [

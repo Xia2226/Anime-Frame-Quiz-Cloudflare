@@ -1,0 +1,155 @@
+/* 自定义下拉框组件，匹配页面现有的圆角 + 软蓝强调 + 阴影浮层风格 */
+.afq-select {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+/* 图库筛选表单里 label 的字段名样式只应作用于文本，排除包装元素并保证下拉占满整列 */
+.filterField > .afq-select {
+  width: 100%;
+  margin: 0;
+}
+
+/* 保留原生 select 作为数据源与表单状态，仅从视觉层隐藏 */
+.afq-select__native {
+  display: none;
+}
+
+.afq-select__trigger {
+  width: 100%;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--line, #d9e0ea);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink, #1d2433);
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.afq-select__trigger:hover {
+  border-color: #c2cde0;
+}
+
+.afq-select.is-open .afq-select__trigger,
+.afq-select__trigger:focus-visible {
+  border-color: var(--accent, #2477f2);
+  box-shadow: 0 0 0 3px rgba(36, 119, 242, 0.11);
+  outline: none;
+}
+
+.afq-select__value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afq-select__chevron {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: #98a2b3;
+  transition: transform 0.16s ease;
+}
+
+.afq-select.is-open .afq-select__chevron {
+  transform: rotate(180deg);
+}
+
+.afq-select__panel {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 100%;
+  max-width: 280px;
+  max-height: 248px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--line, #d9e0ea);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 46px rgba(33, 45, 74, 0.2);
+  backdrop-filter: blur(10px);
+  overscroll-behavior: contain;
+}
+
+.afq-select__option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #344054;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.afq-select__option:hover,
+.afq-select__option:focus-visible {
+  outline: none;
+  background: var(--accent-soft, #eaf2ff);
+  color: var(--accent-dark, #175ec4);
+}
+
+.afq-select__option.is-selected {
+  color: var(--accent-dark, #175ec4);
+  font-weight: 750;
+}
+
+/* 首页自由模式里的标签匹配方式：保持与原配色分段控件一致的样式 */
+.freeTagPicker .afq-select {
+  border-radius: 10px 0 0 10px;
+}
+
+.freeTagPicker .afq-select__trigger {
+  width: 104px;
+  height: 43px;
+  padding: 0 22px 0 11px;
+  border: 0;
+  border-right: 1px solid var(--line, #d9e0ea);
+  border-radius: 10px 0 0 10px;
+  background: var(--accent-soft, #eaf2ff);
+  color: var(--accent-dark, #175ec4);
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: none;
+}
+
+.freeTagPicker .afq-select__trigger:hover {
+  background: #dce9ff;
+}
+
+.freeTagPicker .afq-select__trigger:focus-visible {
+  outline: 2px solid var(--accent, #2477f2);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.freeTagPicker .afq-select.is-open .afq-select__trigger {
+  box-shadow: none;
+}
+
+.freeTagPicker .afq-select__chevron {
+  color: var(--accent-dark, #175ec4);
+}
+
+.freeTagPicker .afq-select__panel {
+  left: 0;
+  right: auto;
+  min-width: 104px;
+}

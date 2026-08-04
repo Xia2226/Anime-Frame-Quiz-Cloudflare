@@ -41,6 +41,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 a { color: var(--accent-dark); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .hidden { display: none !important; }
+[hidden] { display: none !important; }
 .appShell {
   position: relative;
   z-index: 1;
@@ -103,19 +104,31 @@ a { color: var(--accent-dark); text-decoration-thickness: 1px; text-underline-of
   transform: translateY(-1px);
   box-shadow: 0 7px 18px rgba(34, 48, 83, .09);
 }
-.heroCopy { max-width: 700px; margin: 0 auto 34px; text-align: center; }
+.heroCopy { max-width: 760px; margin: 0 auto 34px; text-align: center; }
 .heroCopy h1 {
   margin: 0;
-  font-size: clamp(30px, 5vw, 52px);
-  line-height: 1.12;
-  letter-spacing: -.04em;
+  font-size: clamp(34px, 5.5vw, 56px);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: .02em;
+  text-wrap: balance;
+}
+.heroTitleSub {
+  display: block;
+  margin-top: 12px;
+  color: var(--accent-dark);
+  font-size: clamp(19px, 2.6vw, 25px);
+  font-weight: 700;
+  letter-spacing: .1em;
 }
 .heroDescription {
-  max-width: 610px;
-  margin: 18px auto 0;
+  max-width: 600px;
+  margin: 22px auto 0;
   color: var(--muted);
-  font-size: clamp(14px, 2vw, 17px);
-  line-height: 1.75;
+  font-size: clamp(14px, 1.9vw, 16px);
+  line-height: 1.9;
+  letter-spacing: .03em;
+  text-wrap: pretty;
 }
 .modeGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .modeCard {
@@ -209,6 +222,7 @@ a { color: var(--accent-dark); text-decoration-thickness: 1px; text-underline-of
 .footerLinkCopy small { color: var(--muted); font-size: 9px; font-weight: 600; }
 .githubLink { color: #344054; background: rgba(255, 255, 255, .94); }
 .githubMark { color: #344054; background: #eef1f5; }
+.libraryLink { color: #344054; }
 .gameScreen { min-height: 100vh; padding: 20px 0 26px; }
 .gameHeader {
   min-height: 66px;
@@ -413,7 +427,7 @@ button:disabled { opacity: .52; cursor: not-allowed; transform: none !important;
   font-size: 24px;
   cursor: pointer;
 }
-.modalLead { margin: 0 0 22px; color: var(--muted); line-height: 1.7; }
+.modalLead { margin: 0 0 22px; color: var(--muted); font-size: 15px; line-height: 1.7; }
 .stackForm { display: grid; gap: 11px; }
 .stackForm label, .filterForm label {
   color: #344054;
@@ -448,7 +462,6 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
 .filterForm legend { padding: 0 7px; font-size: 13px; font-weight: 850; }
 .filterGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .filterGrid label { display: grid; gap: 7px; }
-.filterGrid .wideField { grid-column: span 2; }
 .freeTagPicker {
   position: relative;
   display: grid;
@@ -679,6 +692,33 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   .framePanel { min-height: auto; aspect-ratio: 16 / 9; }
   .filterGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+@media (min-width: 901px) {
+  /* 桌面端游戏区固定为视口高度，答题区自动填满剩余空间，避免出现纵向滚动条 */
+  .gameScreen {
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .quizLayout {
+    min-height: 0;
+    flex: 1;
+  }
+  .framePanel { min-height: 0; }
+}
+@media (max-height: 720px) and (min-width: 901px) {
+  /* 视口较矮时压缩固定间距，确保三个模式在一屏内完整显示 */
+  .gameScreen { padding: 12px 0 14px; }
+  .statsBar { margin-top: 8px; }
+  .statItem { padding: 8px 12px; }
+  .quizLayout { margin-top: 8px; gap: 12px; }
+  .options { margin-top: 14px; gap: 7px; }
+  .optionButton { min-height: 50px; }
+  .feedback { margin: 10px 0 0; min-height: 32px; }
+  .questionPanel { padding: 14px 18px; }
+  .questionHeader h2 { font-size: 17px; }
+}
 @media (max-width: 620px) {
   .appShell { width: min(100% - 20px, 1240px); }
   .startScreen { padding-top: 18px; }
@@ -701,7 +741,6 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   .modal { padding: 10px; }
   .compactDialog, .filterDialog, .resultDialog, .homeLeaderboardDialog, .gameGuideDialog { max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); padding: 19px 15px; border-radius: 18px; }
   .filterGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .filterGrid .wideField { grid-column: 1 / -1; }
   .resultMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .resultReviewList { grid-template-columns: 1fr; }
   .reviewCard { grid-template-columns: 116px minmax(0, 1fr); padding: 9px; }
@@ -713,7 +752,6 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
 }
 @media (max-width: 380px) {
   .filterGrid { grid-template-columns: minmax(0, 1fr); }
-  .filterGrid .wideField { grid-column: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }

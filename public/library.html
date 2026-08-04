@@ -13,6 +13,7 @@
     <link rel="canonical" href="/library.html" />
     <title>图库资源与番剧截图统计 | 看图猜番</title>
     <link rel="stylesheet" href="./library.css" />
+    <link rel="stylesheet" href="./dropdown.css" />
   </head>
   <body>
     <a class="skipLink" href="#libraryContent">跳到图库内容</a>
@@ -150,11 +151,7 @@
             <div class="filterField tagSearchField">
               <span>标签搜索</span>
               <div class="tagSearchControl">
-                <select id="tagModeFilter" name="tagMode" aria-label="标签匹配方式">
-                  <option value="any">任一</option>
-                  <option value="all">全部</option>
-                </select>
-                <div id="selectedCatalogTags" class="selectedCatalogTags" role="group" aria-label="已选择标签"><span>尚未选择标签</span></div>
+                <button type="button" id="tagModeFilter" class="tagModeToggle" data-mode="any" aria-label="标签匹配方式" aria-pressed="false">匹配任一</button>
                 <input id="tagSearch" name="tagSearch" type="search" maxlength="60" autocomplete="off" placeholder="输入至少 2 个字符" aria-controls="tagSearchResults" />
                 <div id="tagSearchResults" class="libraryTagResults" hidden></div>
               </div>
@@ -162,7 +159,7 @@
 
             <label class="filterField">
               <span>首播年份</span>
-              <select id="yearFilter" name="year">
+              <select id="yearFilter" name="year" data-afq-select>
                 <option value="">全部年份</option>
               </select>
             </label>
@@ -179,7 +176,7 @@
 
             <label class="filterField">
               <span>排序方式</span>
-              <select id="sortOrder" name="sort">
+              <select id="sortOrder" name="sort" data-afq-select>
                 <option value="score-desc" selected>评分从高到低</option>
                 <option value="images-desc">截图数从多到少</option>
                 <option value="done-desc">观看数从多到少</option>
@@ -193,12 +190,14 @@
 
             <label class="filterField pageSizeField">
               <span>每页</span>
-              <select id="pageSize" name="pageSize">
+              <select id="pageSize" name="pageSize" data-afq-select>
                 <option value="25">25 条</option>
                 <option value="50" selected>50 条</option>
                 <option value="100">100 条</option>
               </select>
             </label>
+            <button type="button" id="resetFilters" class="filterResetButton">重置</button>
+            <div id="selectedCatalogTags" class="selectedCatalogTags" role="group" aria-label="已选择标签"><span>尚未选择标签</span></div>
             <button class="visuallyHidden" type="submit">应用筛选</button>
           </form>
 
@@ -239,6 +238,7 @@
       </noscript>
     </main>
 
+    <script src="./js/dropdown.js" defer></script>
     <script src="./library.js" defer></script>
   </body>
 </html>
