@@ -1,6 +1,7 @@
 "use strict";
 
 const DATA_URL = "./data/anime-library.json";
+const PREVIOUS_DATA_URL = "./data/anime-library-old.json";
 const SEARCH_DELAY_MS = 120;
 const MAX_TOP_TAGS = 18;
 const MAX_ROW_TAGS = 4;
@@ -19,6 +20,7 @@ const state = {
   anime: [],
   filtered: [],
   overview: null,
+  delta: null,
   yearStats: [],
   tags: [],
   selectedTags: [],
@@ -40,12 +42,17 @@ const els = {
   datasetBadge: document.querySelector("#datasetBadge"),
   datasetVersion: document.querySelector("#datasetVersion"),
   animeTotal: document.querySelector("#animeTotal"),
+  animeTotalDelta: document.querySelector("#animeTotalDelta"),
   imageTotal: document.querySelector("#imageTotal"),
+  imageTotalDelta: document.querySelector("#imageTotalDelta"),
   doneTotal: document.querySelector("#doneTotal"),
+  doneTotalDelta: document.querySelector("#doneTotalDelta"),
   ratingsTotal: document.querySelector("#ratingsTotal"),
+  ratingsTotalDelta: document.querySelector("#ratingsTotalDelta"),
   scoreAverage: document.querySelector("#scoreAverage"),
   scoreAverageHint: document.querySelector("#scoreAverageHint"),
   tagTotal: document.querySelector("#tagTotal"),
+  tagTotalDelta: document.querySelector("#tagTotalDelta"),
   chartViewport: document.querySelector("#chartViewport"),
   annualChart: document.querySelector("#annualChart"),
   chartTooltip: document.querySelector("#chartTooltip"),
@@ -119,21 +126,32 @@ async function loadLibrary() {
   showLoadingState();
 
   try {
-    const response = await fetch(DATA_URL, {
+    const requestOptions = {
       signal: controller.signal,
       cache: "default",
       headers: { Accept: "application/json" },
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    };
+    const [currentResponse, previousResponse] = await Promise.all([
+      fetch(DATA_URL, requestOptions),
+      fetch(PREVIOUS_DATA_URL, requestOptions).catch(() => null),
+    ]);
+    if (controller.signal.aborted) return;
+    if (!currentResponse.ok) {
+      throw new Error(`HTTP ${currentResponse.status}`);
     }
 
-    const rawData = await response.json();
+    const [currentRaw, previousRaw] = await Promise.all([
+      currentResponse.json(),
+      previousResponse?.ok ? previousResponse.json() : Promise.resolve(null),
+    ]);
     if (controller.signal.aborted) return;
-    const library = normalizeLibrary(rawData);
+
+    const library = normalizeLibrary(currentRaw);
+    const previous = previousRaw ? normalizePreviousLibrary(previousRaw) : null;
 
     state.anime = library.anime;
     state.overview = calculateOverview(library.anime, library.declaredTags);
+    state.delta = previous ? calculateDelta(library, previous) : null;
     state.yearStats = state.overview.yearStats;
     state.tags = state.overview.topTags.map(([name, animeCount]) => ({
       name,
@@ -214,6 +232,60 @@ function normalizeLibrary(rawData) {
   };
 }
 
+function normalizePreviousLibrary(rawData) {
+  try {
+    return normalizeLibrary(rawData);
+  } catch (error) {
+    console.warn("旧题库解析失败，跳过新增统计：", error);
+    return null;
+  }
+}
+
+function calculateDelta(current, previous) {
+  if (!previous) return null;
+
+  const previousAnimeByBgmId = new Map();
+  const previousImageIds = new Set();
+  const previousTagNames = new Set();
+  for (const item of previous.anime) {
+    previousAnimeByBgmId.set(item.bgmId, item);
+    for (const imageId of item.imageIds) previousImageIds.add(imageId);
+    for (const tag of item.allTags) previousTagNames.add(tag);
+  }
+  for (const tag of previous.declaredTags.keys()) previousTagNames.add(tag);
+
+  const currentTagNames = new Set();
+  let anime = 0;
+  let image = 0;
+  let done = 0;
+  let rating = 0;
+
+  for (const item of current.anime) {
+    for (const tag of item.allTags) currentTagNames.add(tag);
+    const previousItem = previousAnimeByBgmId.get(item.bgmId);
+    if (!previousItem) {
+      anime += 1;
+      image += item.imageIds.length;
+      done += item.doneCount;
+      rating += item.ratingCount;
+      continue;
+    }
+    for (const imageId of item.imageIds) {
+      if (!previousImageIds.has(imageId)) image += 1;
+    }
+    done += Math.max(0, item.doneCount - previousItem.doneCount);
+    rating += Math.max(0, item.ratingCount - previousItem.ratingCount);
+  }
+  for (const tag of current.declaredTags.keys()) currentTagNames.add(tag);
+
+  let tag = 0;
+  for (const name of currentTagNames) {
+    if (!previousTagNames.has(name)) tag += 1;
+  }
+
+  return { anime, image, done, rating, tag };
+}
+
 function normalizeAnime(item, index) {
   if (!item || typeof item !== "object" || !Array.isArray(item.imageIds)) return null;
 
@@ -257,6 +329,7 @@ function normalizeAnime(item, index) {
     metaTags,
     allTags,
     searchTags: new Set(allTags.map(normalizeSearchText)),
+    imageIds: [...imageIds],
     imageCount: imageIds.size,
     cover,
     searchKey: normalizeSearchText([title, originalTitle, bgmId, anidbId].filter(Boolean).join(" ")),
@@ -423,6 +496,7 @@ function renderOverview() {
   setMetric(els.doneTotal, overview.doneTotal);
   setMetric(els.ratingsTotal, overview.ratingsTotal);
   setMetric(els.tagTotal, overview.tagTotal);
+  renderOverviewDelta();
   if (overview.averageScore === null) {
     els.scoreAverage.textContent = "—";
     els.scoreAverage.title = "没有可计算平均分的条目";
@@ -433,6 +507,27 @@ function renderOverview() {
     els.scoreAverage.title = score;
     els.scoreAverageHint.textContent = overview.usesWeightedAverage ? "按评分人数加权" : "按有评分番剧平均";
   }
+}
+
+function renderOverviewDelta() {
+  const delta = state.delta;
+  setMetricDelta(els.animeTotalDelta, delta?.anime);
+  setMetricDelta(els.imageTotalDelta, delta?.image);
+  setMetricDelta(els.doneTotalDelta, delta?.done);
+  setMetricDelta(els.ratingsTotalDelta, delta?.rating);
+  setMetricDelta(els.tagTotalDelta, delta?.tag);
+}
+
+function setMetricDelta(element, value) {
+  if (!element) return;
+  if (value === null || value === undefined || value <= 0) {
+    element.hidden = true;
+    return;
+  }
+  const text = `+新增${integerFormatter.format(value)}`;
+  element.textContent = text;
+  element.title = text;
+  element.hidden = false;
 }
 
 function setMetric(element, value) {

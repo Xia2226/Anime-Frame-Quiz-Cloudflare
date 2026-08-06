@@ -1,5 +1,7 @@
 # 动漫截图猜番
 
+在线体验：<https://animeframequiz.cn>
+
 一个部署在 Cloudflare Workers + Static Assets 上的动漫截图问答游戏。项目提供经典模式、自由模式和困难挑战，并使用 Cloudflare D1 维护每日排行榜。
 
 经典模式与自由模式完全基于构建期生成的精简题库运行；浏览器不会在运行时读取约 1 GB 的 Bangumi 原始数据，也不会逐题请求 Worker。困难挑战沿用 Sakugabooru、trace.moe、AniList 与 DeepSeek 识别链路，但对题源和解析请求做了批处理，以尽量节省 Cloudflare 免费额度。
@@ -73,7 +75,7 @@ resources/subject.jsonlines
 5. 剔除 `nsfw` 或带里番、色情、R18、工口、H、肉番、擦边等高置信成人标签的条目；仅有“卖肉/肉/福利/杀必死”时保留，并把过滤依据写入隔离报告；
 6. 原子写入浏览器使用的 `public/data/anime-library.json`，并将隔离详情写入 `resources/generated/anime-library-quarantine.json`。
 
-当前生成题库在过滤 85 部成人内容番剧后，包含 2,042 部番剧、129,172 张截图和 3,499 个标签。原始 JSONL 与隔离报告均不作为静态资源发布；线上只加载约 2.08 MB、gzip 后约 691 KB 的精简 JSON。
+当前生成题库包含 2,170 部番剧、141,648 张截图和 3,708 个标签。原始 JSONL 与隔离报告均不作为静态资源发布；线上只加载约 2.21 MB、gzip 后约 745 KB 的精简 JSON。
 
 生成或替换源文件后执行：
 
@@ -161,6 +163,7 @@ DeepSeek Key 通过 `X-DeepSeek-Api-Key` 请求头传递。Worker 对请求体�
 │   └── 0001_daily_best.sql       # 每日最佳成绩表与排序索引
 ├── public/
 │   ├── data/anime-library.json   # 构建生成的精简题库
+│   ├── data/anime-library-old.json # 上一版题库，用于统计新增数据
 │   ├── js/
 │   │   ├── catalog.js            # 题库加载、抽题和自由筛选
 │   │   ├── game-config.js        # 开发者统一参数

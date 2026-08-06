@@ -333,7 +333,8 @@ select {
 
 .statCard > span,
 .statCard > strong,
-.statCard > small {
+.statCard > small,
+.statCard > .statValue {
   display: block;
 }
 
@@ -348,6 +349,33 @@ select {
   margin: 8px 0 4px;
   color: var(--card-color, var(--accent));
   font-size: clamp(23px, 2.7vw, 32px);
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statValue {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin: 8px 0 4px;
+}
+
+.statValue > strong {
+  overflow: hidden;
+  color: var(--card-color, var(--accent));
+  font-size: clamp(23px, 2.7vw, 32px);
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statDelta {
+  overflow: hidden;
+  color: var(--card-color, var(--accent));
+  font-size: 11px;
+  font-weight: 700;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;

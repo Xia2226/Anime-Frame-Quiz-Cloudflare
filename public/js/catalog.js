@@ -208,7 +208,7 @@ export function normalizeSearchText(value) {
 }
 
 function normalizeCatalog(value) {
-  if (value?.version !== 1 || !Array.isArray(value?.anime) || typeof value?.imageBase !== "string") {
+  if (!Array.isArray(value?.anime) || typeof value?.imageBase !== "string") {
     throw new Error("精简题库格式不兼容，请重新运行 npm run build:data");
   }
   const anime = value.anime.map((item) => {
