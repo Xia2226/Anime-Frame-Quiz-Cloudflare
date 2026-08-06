@@ -283,7 +283,7 @@ function normalizeHistoryTags(value) {
   )].slice(0, 5);
 }
 
-export function calculateScore(remainingSeconds, tiers = DEFAULT_SCORE_TIERS) {
+function calculateScore(remainingSeconds, tiers = DEFAULT_SCORE_TIERS) {
   if (!(remainingSeconds > 0)) return 0;
   for (const tier of tiers) {
     if (remainingSeconds >= Number(tier.minimumSeconds)) return Number(tier.points) || 0;

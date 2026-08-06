@@ -17,6 +17,24 @@ const MODE_META = {
   free: { eyebrow: 'Free Mode', title: '自由模式' },
   hard: { eyebrow: 'Hard Challenge', title: '困难挑战' },
 };
+const FEEDBACK_TYPE_META = Object.freeze({
+  anime_error: Object.freeze({
+    label: '番剧错误',
+    placeholder: '请描述图片中的番剧名称与系统给出的答案…',
+  }),
+  bug: Object.freeze({
+    label: 'BUG反馈',
+    placeholder: '请描述复现步骤与遇到的问题…',
+  }),
+  feature: Object.freeze({
+    label: '项目功能',
+    placeholder: '请描述你希望新增或改进的功能与使用场景…',
+  }),
+  other: Object.freeze({
+    label: '其他',
+    placeholder: '请在这里填写你的意见或建议…',
+  }),
+});
 const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   timeZone: GAME_CONFIG.leaderboard.timeZone,
   month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
@@ -33,6 +51,8 @@ const state = {
 };
 const ids = [
   'startScreen', 'gameScreen', 'classicModeButton', 'freeModeButton', 'startButton', 'gameGuideButton', 'homeLeaderboardButton',
+  'feedbackFab', 'feedbackModal', 'feedbackCloseButton', 'feedbackForm',
+  'feedbackContent', 'feedbackMessage', 'feedbackSubmitButton', 'feedbackCancelButton',
   'backButton', 'gameModeLabel', 'gameTitle', 'freeFilterButton', 'finishHardButton',
   'progressValue', 'progressLabel', 'primaryMetric', 'primaryMetricLabel',
   'secondaryMetric', 'secondaryMetricLabel', 'timerStat', 'timerValue', 'poolStat',
@@ -85,6 +105,14 @@ function bindEvents() {
   els.startButton.addEventListener('click', openHardModal);
   els.homeLeaderboardButton.addEventListener('click', openHomeLeaderboard);
   els.gameGuideButton.addEventListener('click', openGameGuide);
+  els.feedbackFab.addEventListener('click', openFeedback);
+  els.feedbackCloseButton.addEventListener('click', closeFeedback);
+  els.feedbackCancelButton.addEventListener('click', closeFeedback);
+  els.feedbackForm.addEventListener('change', updateFeedbackPlaceholder);
+  els.feedbackForm.addEventListener('submit', submitFeedback);
+  els.feedbackModal.addEventListener('click', (event) => {
+    if (event.target === els.feedbackModal) closeFeedback();
+  });
   els.backButton.addEventListener('click', showHome);
   els.skipButton.addEventListener('click', () => state.engine?.skip());
   els.finishHardButton.addEventListener('click', finishHardGame);
@@ -139,6 +167,7 @@ function handleKeyboard(event) {
     if (!els.hardApiModal.classList.contains('hidden')) closeHardModal();
     else if (!els.gameGuideModal.classList.contains('hidden')) closeGameGuide();
     else if (!els.homeLeaderboardModal.classList.contains('hidden')) closeHomeLeaderboard();
+    else if (!els.feedbackModal.classList.contains('hidden')) closeFeedback();
     else if (!els.freeFilterModal.classList.contains('hidden')) closeFreeFilter();
     return;
   }
@@ -242,6 +271,58 @@ function openGameGuide() {
 function closeGameGuide() {
   closeModal(els.gameGuideModal);
   if (!els.startScreen.classList.contains('hidden')) els.gameGuideButton.focus();
+}
+
+function openFeedback() {
+  els.feedbackForm.reset();
+  els.feedbackContent.placeholder = FEEDBACK_TYPE_META.anime_error.placeholder;
+  setFormMessage(els.feedbackMessage, '');
+  els.feedbackSubmitButton.disabled = false;
+  openModal(els.feedbackModal, els.feedbackContent);
+}
+
+function closeFeedback() {
+  closeModal(els.feedbackModal);
+  if (!els.startScreen.classList.contains('hidden')) els.feedbackFab.focus();
+}
+
+function updateFeedbackPlaceholder() {
+  const type = getSelectedFeedbackType();
+  const meta = FEEDBACK_TYPE_META[type];
+  if (meta) els.feedbackContent.placeholder = meta.placeholder;
+}
+
+function getSelectedFeedbackType() {
+  const checked = els.feedbackForm.querySelector('input[name="feedbackType"]:checked');
+  return checked?.value || 'anime_error';
+}
+
+async function submitFeedback(event) {
+  event.preventDefault();
+  if (els.feedbackSubmitButton.disabled) return;
+  const content = els.feedbackContent.value.trim();
+  const type = getSelectedFeedbackType();
+  if (!content) {
+    setFormMessage(els.feedbackMessage, '请填写反馈内容', 'error');
+    els.feedbackContent.focus();
+    return;
+  }
+  els.feedbackSubmitButton.disabled = true;
+  setFormMessage(els.feedbackMessage, '正在提交…', 'loading');
+  try {
+    const response = await fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ type, content }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.error || `提交失败（HTTP ${response.status}）`);
+    setFormMessage(els.feedbackMessage, '已收到你的反馈，感谢支持！', 'success');
+    window.setTimeout(closeFeedback, 900);
+  } catch (error) {
+    setFormMessage(els.feedbackMessage, error.message, 'error');
+    els.feedbackSubmitButton.disabled = false;
+  }
 }
 
 

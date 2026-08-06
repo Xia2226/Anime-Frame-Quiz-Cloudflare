@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta
       name="description"
-      content="在线玩看图猜番与动漫截图猜番游戏，从动画画面猜番名，支持经典模式、自由筛选和困难挑战。"
+      content="在线动漫截图猜番小游戏！海量动画截图，包含经典模式、自定义筛选、高难度挑战。二次元爱好者来测试你的阅番量！"
     />
     <meta
       name="keywords"
@@ -36,7 +36,7 @@
       name="twitter:description"
       content="从一帧动画画面猜出番剧名称，支持经典、自由筛选与困难挑战。"
     />
-    <title>看图猜番 · 动漫截图猜番游戏 | Anime Frame Quiz</title>
+    <title>动漫截图猜番｜AnimeFrameQuiz 看图猜动漫小游戏</title>
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./dropdown.css" />
     <script type="application/ld+json">
@@ -58,6 +58,18 @@
       <section id="startScreen" class="startScreen">
         <div class="homeStack">
           <div class="heroCard">
+            <div class="homeFeedbackCorner">
+              <button
+                id="feedbackFab"
+                class="homeUtilityButton feedbackHomeButton"
+                type="button"
+                aria-label="反馈问题"
+                title="问题反馈"
+              >
+                <span class="feedbackHomeIcon" aria-hidden="true">!</span>
+                反馈问题
+              </button>
+            </div>
             <div class="homeTopActions">
               <button
                 id="gameGuideButton"
@@ -181,6 +193,9 @@
                 <span aria-hidden="true">↗</span>
               </a>
             </div>
+            <p class="footerDisclaimer">
+              免责声明：本站截图与资料均来自公开网络，版权归原著作权人所有，仅供学习交流使用。若相关权益方认为内容存在侵权，请通过卡片左上角「问题反馈」联系我们，我们将在核实后尽快处理。
+            </p>
           </footer>
         </div>
       </section>
@@ -454,6 +469,78 @@
       </section>
     </div>
     <div
+      id="feedbackModal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="feedbackTitle"
+    >
+      <section class="modalDialog feedbackDialog">
+        <header class="modalHeader">
+          <div>
+            <p class="eyebrow">Feedback</p>
+            <h2 id="feedbackTitle">问题反馈</h2>
+          </div>
+          <button
+            id="feedbackCloseButton"
+            class="modalClose"
+            type="button"
+            aria-label="关闭问题反馈"
+          >
+            ×
+          </button>
+        </header>
+        <form id="feedbackForm" class="stackForm">
+          <fieldset class="feedbackTypeGroup">
+            <legend>反馈类型</legend>
+            <div class="feedbackTypes" role="radiogroup" aria-label="反馈类型">
+              <label class="feedbackTypeOption">
+                <input type="radio" name="feedbackType" value="anime_error" checked />
+                <span>番剧错误</span>
+              </label>
+              <label class="feedbackTypeOption">
+                <input type="radio" name="feedbackType" value="bug" />
+                <span>BUG反馈</span>
+              </label>
+              <label class="feedbackTypeOption">
+                <input type="radio" name="feedbackType" value="feature" />
+                <span>项目功能</span>
+              </label>
+              <label class="feedbackTypeOption">
+                <input type="radio" name="feedbackType" value="other" />
+                <span>其他</span>
+              </label>
+            </div>
+          </fieldset>
+          <label for="feedbackContent">反馈内容（必填）</label>
+          <textarea
+            id="feedbackContent"
+            rows="5"
+            maxlength="2000"
+            required
+            placeholder="请描述图片中的番剧名称与系统给出的答案…"
+          ></textarea>
+          <p id="feedbackMessage" class="formMessage" role="status"></p>
+          <div class="modalActions">
+            <button
+              id="feedbackCancelButton"
+              class="secondaryButton"
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              id="feedbackSubmitButton"
+              class="primaryButton"
+              type="submit"
+            >
+              提交反馈
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+    <div
       id="freeFilterModal"
       class="modal hidden"
       role="dialog"
@@ -712,7 +799,7 @@
         </footer>
       </section>
     </div>
-    <div id="globalNotice" class="globalNotice hidden" role="status"></div>
+    <script src="./js/tracker.js" defer></script>
     <script type="module" src="./js/dropdown.js"></script>
     <script type="module" src="./app.js"></script>
   </body>

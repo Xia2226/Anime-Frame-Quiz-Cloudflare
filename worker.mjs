@@ -15,6 +15,12 @@ const USERNAME_MAX_LENGTH = 24;
 const MAX_HARD_QUESTION_COUNT = 10000;
 const MAX_HARD_ELAPSED_MS = 7 * 24 * 60 * 60 * 1000;
 const LEADERBOARD_MODES = new Set(["classic", "hard"]);
+const FEEDBACK_TYPES = new Set(["anime_error", "bug", "feature", "other"]);
+const FEEDBACK_CONTENT_MAX_LENGTH = 2000;
+const FEEDBACK_CONTACT_MAX_LENGTH = 128;
+const FEEDBACK_RETENTION_DAYS = 30;
+const ANALYTICS_RETENTION_DAYS = 90;
+const ANALYTICS_PATH_MAX_LENGTH = 200;
 const LOCAL_SCORE_POINTS = [...new Set(GAME_CONFIG.scoreThresholds.map((tier) => Number(tier.points)))];
 const LOCAL_MAX_POINTS = Math.max(...LOCAL_SCORE_POINTS);
 const LOCAL_REACHABLE_SCORES = buildReachableScoreSets(
@@ -99,6 +105,39 @@ export default {
         return json(await validateDeepSeekApiKey(apiKey));
       }
 
+      if (url.pathname === "/api/track") {
+        requireMethod(request, "POST");
+        return await handleTrackView(request, env);
+      }
+
+      if (url.pathname === "/api/feedback") {
+        requireMethod(request, "POST");
+        return await handleFeedbackPost(request, env);
+      }
+
+      if (url.pathname === "/api/admin/leaderboard/days") {
+        requireMethod(request, "GET");
+        return await handleAdminLeaderboardDays(request, url, env);
+      }
+
+      if (url.pathname === "/api/admin/leaderboard") {
+        requireMethod(request, "GET");
+        return await handleAdminLeaderboardDetail(request, url, env);
+      }
+
+      if (url.pathname === "/api/admin/analytics") {
+        requireMethod(request, "GET");
+        return await handleAdminAnalytics(request, url, env);
+      }
+
+      if (url.pathname === "/api/admin/feedback") {
+        if (request.method === "DELETE") {
+          return await handleAdminFeedbackDelete(request, url, env);
+        }
+        requireMethod(request, "GET");
+        return await handleAdminFeedbackList(request, url, env);
+      }
+
       if (url.pathname.startsWith("/api/")) {
         return json({ error: "API endpoint not found", code: "NOT_FOUND" }, 404);
       }
@@ -140,6 +179,30 @@ export default {
       cutoffDay,
       rowsDeleted: result.meta?.changes ?? null,
     }));
+
+    const feedbackCutoffMs = controller.scheduledTime
+      - FEEDBACK_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const feedbackResult = await env.DB.prepare(
+      "DELETE FROM feedback WHERE created_at < ?",
+    ).bind(feedbackCutoffMs).run();
+    console.log(JSON.stringify({
+      level: "info",
+      event: "feedback_retention_cleanup",
+      cutoffBefore: new Date(feedbackCutoffMs).toISOString(),
+      rowsDeleted: feedbackResult.meta?.changes ?? null,
+    }));
+
+    const analyticsCutoffMs = controller.scheduledTime
+      - ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const analyticsResult = await env.DB.prepare(
+      "DELETE FROM page_view WHERE created_at < ?",
+    ).bind(analyticsCutoffMs).run();
+    console.log(JSON.stringify({
+      level: "info",
+      event: "analytics_retention_cleanup",
+      cutoffBefore: new Date(analyticsCutoffMs).toISOString(),
+      rowsDeleted: analyticsResult.meta?.changes ?? null,
+    }));
   },
 };
 
@@ -149,6 +212,7 @@ function createRobotsResponse(url) {
     "User-agent: *",
     "Allow: /",
     "Disallow: /api/",
+    "Disallow: /admin",
     `Sitemap: ${sitemapUrl}`,
     "",
   ].join("\n"), {
@@ -459,6 +523,253 @@ async function handleLeaderboardPost(request, url, env) {
     ? formatLeaderboardEntry(personalRow, personalRankIndex >= 0 ? personalRankIndex + 1 : null)
     : null;
   return json({ dayKey, mode, entries, personalBest });
+}
+
+async function handleFeedbackPost(request, env) {
+  requireLeaderboardDatabase(env);
+  const body = await readJsonBody(request, 16 * 1024);
+  const feedback = normalizeFeedbackSubmission(body);
+  const createdAt = Date.now();
+  await env.DB.prepare(
+    "INSERT INTO feedback (type, content, contact, created_at) VALUES (?, ?, ?, ?)",
+  ).bind(
+    feedback.type,
+    feedback.content,
+    feedback.contact,
+    createdAt,
+  ).run();
+  return json({ ok: true, createdAt });
+}
+
+async function handleAdminFeedbackList(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const typeFilter = parseAdminFeedbackTypeFilter(url.searchParams.get("type"));
+  const limit = parseAdminFeedbackLimit(url.searchParams.get("limit"));
+  const offset = parseAdminFeedbackOffset(url.searchParams.get("offset"));
+  const conditions = typeFilter ? "WHERE type = ?" : "";
+  const bindArgs = typeFilter ? [typeFilter] : [];
+  const countResult = await env.DB.prepare(
+    `SELECT COUNT(*) AS total FROM feedback ${conditions}`,
+  ).bind(...bindArgs).first();
+  const listResult = await env.DB.prepare(
+    `SELECT id, type, content, contact, created_at FROM feedback ${conditions}
+     ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+  ).bind(...bindArgs, limit, offset).all();
+  const items = (listResult.results || []).map((row) => ({
+    id: row.id,
+    type: row.type,
+    content: row.content,
+    contact: row.contact,
+    createdAt: row.created_at,
+  }));
+  return json({ total: countResult?.total ?? 0, limit, offset, items });
+}
+
+async function handleAdminFeedbackDelete(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const id = parseAdminFeedbackId(url.searchParams.get("id"));
+  const result = await env.DB.prepare("DELETE FROM feedback WHERE id = ?").bind(id).run();
+  if (!(result.meta?.changes > 0)) throw httpError(404, "反馈记录不存在");
+  return json({ ok: true });
+}
+
+function parseAdminFeedbackId(value) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) throw httpError(400, "id 无效");
+  return id;
+}
+
+function parseAdminFeedbackTypeFilter(value) {
+  const type = String(value || "").trim();
+  if (!type) return "";
+  if (!FEEDBACK_TYPES.has(type)) {
+    throw httpError(400, "type 必须是 anime_error、bug、feature 或 other");
+  }
+  return type;
+}
+
+function parseAdminFeedbackLimit(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 20;
+  const limit = Number(raw);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw httpError(400, "limit 必须是 1 到 100 之间的整数");
+  }
+  return limit;
+}
+
+function parseAdminFeedbackOffset(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const offset = Number(raw);
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw httpError(400, "offset 必须是非负整数");
+  }
+  return offset;
+}
+
+async function handleTrackView(request, env) {
+  requireLeaderboardDatabase(env);
+  const body = await readJsonBody(request, 4 * 1024);
+  const rawPath = body?.path;
+  const path = typeof rawPath === "string" && rawPath.startsWith("/")
+    ? rawPath.slice(0, ANALYTICS_PATH_MAX_LENGTH)
+    : "/";
+  const dayKey = getLeaderboardDayKey();
+  const ipHash = hashClientIp(request);
+  await env.DB.prepare(
+    "INSERT INTO page_view (date, path, ip_hash, created_at) VALUES (?, ?, ?, ?)",
+  ).bind(dayKey, path, ipHash, Date.now()).run();
+  return json({ ok: true });
+}
+
+function hashClientIp(request) {
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  // FNV-1a 32 位哈希：只存哈希值，不保存明文 IP
+  let hash = 2166136261;
+  for (let index = 0; index < ip.length; index += 1) {
+    hash ^= ip.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+async function handleAdminLeaderboardDays(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const days = parseAdminDays(url.searchParams.get("days"), 14, 1, 90);
+  const todayKey = getLeaderboardDayKey();
+  const cutoff = subtractDaysFromDayKey(todayKey, days - 1);
+  const result = await env.DB.prepare(`
+    SELECT day_key, mode, COUNT(*) AS count
+    FROM daily_best
+    WHERE day_key >= ?
+    GROUP BY day_key, mode
+    ORDER BY day_key ASC, mode ASC
+  `).bind(cutoff).all();
+  const byDay = new Map();
+  for (const row of result.results || []) {
+    let entry = byDay.get(row.day_key);
+    if (!entry) {
+      entry = { dayKey: row.day_key, classic: 0, hard: 0 };
+      byDay.set(row.day_key, entry);
+    }
+    if (row.mode === "classic") entry.classic = Number(row.count);
+    if (row.mode === "hard") entry.hard = Number(row.count);
+  }
+  const daysList = [];
+  const startDate = dayKeyToDate(cutoff);
+  const endDate = dayKeyToDate(todayKey);
+  for (let cursor = new Date(startDate); cursor <= endDate; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const key = formatDayKey(cursor);
+    daysList.push(byDay.get(key) || { dayKey: key, classic: 0, hard: 0 });
+  }
+  return json({ days: daysList });
+}
+
+async function handleAdminLeaderboardDetail(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const mode = normalizeLeaderboardMode(url.searchParams.get("mode"));
+  const dayKey = parseAdminDayKey(url.searchParams.get("dayKey")) || getLeaderboardDayKey();
+  const countResult = await env.DB.prepare(
+    "SELECT COUNT(*) AS total FROM daily_best WHERE day_key = ? AND mode = ?",
+  ).bind(dayKey, mode).first();
+  const listResult = await createLeaderboardSelectStatement(env.DB, mode, dayKey).all();
+  const entries = formatLeaderboardEntries(listResult.results || []);
+  return json({ dayKey, mode, total: countResult?.total ?? 0, entries });
+}
+
+async function handleAdminAnalytics(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const days = parseAdminDays(url.searchParams.get("days"), 30, 1, 90);
+  const cutoff = subtractDaysFromDayKey(getLeaderboardDayKey(), days - 1);
+  const dailyResult = await env.DB.prepare(`
+    SELECT date, COUNT(*) AS pv, COUNT(DISTINCT ip_hash) AS uv
+    FROM page_view
+    WHERE date >= ?
+    GROUP BY date
+    ORDER BY date ASC
+  `).bind(cutoff).all();
+  const totalResult = await env.DB.prepare(`
+    SELECT COUNT(*) AS pv, COUNT(DISTINCT ip_hash) AS uv
+    FROM page_view
+    WHERE date >= ?
+  `).bind(cutoff).first();
+  return json({
+    days: (dailyResult.results || []).map((row) => ({
+      date: row.date,
+      pv: Number(row.pv),
+      uv: Number(row.uv),
+    })),
+    totals: {
+      pv: Number(totalResult?.pv) || 0,
+      uv: Number(totalResult?.uv) || 0,
+    },
+  });
+}
+
+function parseAdminDays(value, fallback, min, max) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return fallback;
+  const days = Number(raw);
+  if (!Number.isInteger(days) || days < min || days > max) {
+    throw httpError(400, `days 必须是 ${min} 到 ${max} 之间的整数`);
+  }
+  return days;
+}
+
+function parseAdminDayKey(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    throw httpError(400, "dayKey 格式必须是 YYYY-MM-DD");
+  }
+  return raw;
+}
+
+function dayKeyToDate(dayKey) {
+  const [year, month, day] = dayKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function formatDayKey(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function subtractDaysFromDayKey(dayKey, count) {
+  const date = dayKeyToDate(dayKey);
+  date.setUTCDate(date.getUTCDate() - count);
+  return formatDayKey(date);
+}
+
+function normalizeFeedbackSubmission(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw httpError(400, "请求体必须是对象");
+  }
+  const type = String(body.type || "").trim();
+  if (!FEEDBACK_TYPES.has(type)) {
+    throw httpError(400, "type 必须是 anime_error、bug、feature 或 other");
+  }
+  const content = normalizeFeedbackText(body.content, "content", FEEDBACK_CONTENT_MAX_LENGTH, true);
+  const contact = normalizeFeedbackText(body.contact, "contact", FEEDBACK_CONTACT_MAX_LENGTH, false);
+  return { type, content, contact };
+}
+
+function normalizeFeedbackText(value, fieldName, maximumLength, required) {
+  if (value === null || value === undefined) value = "";
+  if (typeof value !== "string") throw httpError(400, `${fieldName} 必须是字符串`);
+  const text = value.trim().normalize("NFKC");
+  if (required && !text) throw httpError(400, `${fieldName} 不能为空`);
+  if (!required && !text) return "";
+  if (Array.from(text).length > maximumLength) {
+    throw httpError(400, `${fieldName} 长度不能超过 ${maximumLength} 个字符`);
+  }
+  if (/[\p{Cc}\p{Cf}\p{Cs}]/u.test(text)) {
+    throw httpError(400, `${fieldName} 包含不允许的控制字符`);
+  }
+  return text;
 }
 
 function normalizeLeaderboardMode(value) {

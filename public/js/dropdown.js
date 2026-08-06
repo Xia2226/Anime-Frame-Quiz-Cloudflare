@@ -31,7 +31,7 @@
         closeSelect();
       }
     }, true);
-    window.addEventListener("blur", closeSelect);
+    window.addEventListener("blur", () => closeSelect());
     // 面板脱离滚动容器后，滚动/缩放时保持与触发器对齐
     document.addEventListener("scroll", repositionActive, true);
     window.addEventListener("resize", repositionActive);

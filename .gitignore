@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 .wrangler/
+.wrangler-registry/
 .dev.vars
 
 # Legacy local runtime data

@@ -223,6 +223,34 @@ a { color: var(--accent-dark); text-decoration-thickness: 1px; text-underline-of
 .githubLink { color: #344054; background: rgba(255, 255, 255, .94); }
 .githubMark { color: #344054; background: #eef1f5; }
 .libraryLink { color: #344054; }
+.footerDisclaimer {
+  max-width: 920px;
+  margin: 12px auto 0;
+  padding-top: 12px;
+  border-top: 1px solid rgba(220, 227, 239, .75);
+  color: #98a2b3;
+  font-size: 10px;
+  line-height: 1.7;
+}
+.homeFeedbackCorner {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.feedbackHomeButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.feedbackHomeIcon {
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+}
 .gameScreen { min-height: 100vh; padding: 20px 0 26px; }
 .gameHeader {
   min-height: 66px;
@@ -572,6 +600,67 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   cursor: pointer;
 }
 .leaderboardTab.active { border-color: #b9c5ff; background: var(--accent-soft); color: var(--accent-dark); }
+.feedbackDialog { width: min(100%, 560px); padding: 28px; }
+.feedbackTypeGroup {
+  margin: 0 0 2px;
+  padding: 0;
+  border: 0;
+}
+.feedbackTypeGroup legend {
+  margin-bottom: 9px;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 750;
+}
+.feedbackTypes {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.feedbackTypeOption {
+  position: relative;
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 820;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, color .16s ease;
+}
+.feedbackTypeOption:has(input:checked) {
+  border-color: #b9c5ff;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+.feedbackTypeOption:hover { border-color: #c3ceff; }
+.feedbackTypeOption input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+#feedbackContent {
+  width: 100%;
+  min-height: 110px;
+  padding: 10px 11px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: #fff;
+  outline: 0;
+  font: inherit;
+  line-height: 1.6;
+}
+#feedbackContent:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 109, 245, .12);
+}
 .homeLeaderboardMeta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
 .gameGuideDialog { width: min(100%, 760px); padding: 30px; }
 .gameGuideContent { display: grid; gap: 19px; color: #344054; }
@@ -671,18 +760,6 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   background-clip: padding-box;
 }
 :is(.filterScrollArea, .resultScrollArea, .modalScrollRegion, .leaderboardScroller, .tagResults)::-webkit-scrollbar-thumb:hover { background-color: #8f9db2; }
-.globalNotice {
-  position: fixed;
-  z-index: 200;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
-  padding: 11px 16px;
-  border-radius: 999px;
-  color: #fff;
-  background: #182033;
-  box-shadow: var(--shadow);
-}
 @media (max-width: 900px) {
   .modeGrid { grid-template-columns: 1fr; }
   .modeCard { min-height: 112px; grid-template-columns: auto 1fr auto; grid-template-rows: 1fr; align-items: center; }
@@ -729,6 +806,9 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   .modeCopy strong { font-size: 17px; }
   .heroCopy { padding-top: 26px; }
   .homeTopActions { top: 12px; right: 12px; }
+  .homeFeedbackCorner { top: 12px; left: 12px; }
+  .feedbackTypes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .feedbackDialog { padding: 22px 18px; }
   .gameScreen { padding-top: 10px; }
   .gameHeader { grid-template-columns: 44px 1fr; }
   .gameActions { grid-column: 1 / -1; }
