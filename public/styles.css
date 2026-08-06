@@ -259,7 +259,7 @@ a { color: var(--accent-dark); text-decoration-thickness: 1px; text-underline-of
   align-items: center;
   gap: 16px;
 }
-.gameHeading h1 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
+.gameHeading h2 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
 .iconButton {
   width: 44px;
   height: 44px;
