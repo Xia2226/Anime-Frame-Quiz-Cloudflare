@@ -45,6 +45,10 @@ const ANILIST_CACHE_LIMIT = 1000;
 const SOURCE_ATTEMPTS = 24;
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm"]);
 
+// 规范域名：www 子域名统一 301 跳转到裸域，避免搜索引擎重复收录
+const CANONICAL_HOSTNAME = "animeframequiz.cn";
+const WWW_HOSTNAME = `www.${CANONICAL_HOSTNAME}`;
+
 const DEFAULT_FILTER = {
   startDate: "",
   endDate: "",
@@ -61,6 +65,11 @@ const anilistCache = new Map();
 export default {
   async fetch(request, env, context) {
     const url = new URL(request.url);
+    // www 子域名 301 跳转到裸域，保留路径与查询参数
+    if (url.hostname === WWW_HOSTNAME) {
+      url.hostname = CANONICAL_HOSTNAME;
+      return Response.redirect(url.toString(), 301);
+    }
     try {
       if (url.pathname === "/robots.txt") {
         requireMethod(request, "GET");
