@@ -474,6 +474,9 @@ input {
   outline: 0;
 }
 input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 245, .12); }
+#freeFilterModal input:focus-visible {
+  outline: none;
+}
 .formMessage { min-height: 20px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .formMessage[data-state=error] { color: var(--danger); }
 .formMessage[data-state=success] { color: var(--success); }
@@ -583,8 +586,14 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   padding: 10px;
   color: var(--muted);
   background: #f3f6fb;
-  text-align: left;
   white-space: nowrap;
+}
+/* 内容居中，列宽贴合内容，避免短内容列出现大段空白 */
+.leaderboardTable th,
+.leaderboardTable td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
 }
 .leaderboardTable td { padding: 10px; border-top: 1px solid var(--line); white-space: nowrap; }
 .leaderboardTable tbody tr:nth-child(-n+3) { background: #fffaf0; }
@@ -675,6 +684,18 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
 .homeLeaderboardMeta p { margin: 0; color: var(--muted); font-size: 12px; }
 .homeLeaderboardScroller { max-height: min(58vh, 520px); }
 .resultReviewSection { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+.resultReviewTip {
+  margin: 0 0 14px;
+  padding: 10px 16px;
+  border: 1px solid #d6e0ff;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.6;
+  text-align: center;
+}
 .resultReviewList {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

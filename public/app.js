@@ -85,8 +85,6 @@ maybeOpenGameGuide();
 function renderConfiguredCopy() {
   const classicSummary = els.classicModeButton.querySelector('small');
   const hardSummary = els.startButton.querySelector('small');
-  const classicIcon = els.classicModeButton.querySelector('.modeIcon');
-  if (classicIcon) classicIcon.textContent = String(LOCAL_COUNT);
   if (classicSummary) {
     classicSummary.textContent = `随机 ${LOCAL_COUNT} 部番剧 · 每题 ${GAME_CONFIG.questionSeconds} 秒 · 满分 ${LOCAL_MAX_SCORE}`;
   }
@@ -140,6 +138,12 @@ function bindEvents() {
   els.freeFilterForm.addEventListener('submit', startFilteredGame);
   els.freeTagSearch.addEventListener('focus', renderTagSearch);
   els.freeTagSearch.addEventListener('input', renderTagSearch);
+  els.freeTagSearch.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const first = els.freeTagResults.querySelector('button[data-tag]');
+    if (first) chooseTag({ target: first });
+  });
   els.freeTagResults.addEventListener('click', chooseTag);
   els.freeSelectedTags.addEventListener('click', removeTag);
   document.addEventListener('pointerdown', (event) => {
@@ -201,6 +205,7 @@ function showHome() {
 }
 
 function showGameShell(mode) {
+  els.freeTagResults.classList.add('hidden');
   closeAllModals();
   state.mode = mode;
   els.startScreen.classList.add('hidden');
@@ -739,7 +744,7 @@ function openFreeFilter(initial) {
   els.freeTagResults.replaceChildren();
   els.freeTagResults.classList.add('hidden');
   updateFreeFilterPreview();
-  openModal(els.freeFilterModal, els.freeStartDate);
+  openModal(els.freeFilterModal);
 }
 
 function restartFromFreeFilter() {
@@ -750,6 +755,7 @@ function restartFromFreeFilter() {
 }
 
 function closeFreeFilter() {
+  els.freeTagResults.classList.add('hidden');
   closeModal(els.freeFilterModal);
   if (state.freeFilterInitial) {
     showHome();

@@ -156,6 +156,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 }
 .status.loading { background: var(--accent-soft); color: var(--accent-dark); }
 .status.error { background: var(--danger-soft); color: var(--danger); }
+.status:empty { display: none; }
 .listSection {
   display: grid;
   gap: 12px;
@@ -222,7 +223,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   line-height: 1.65;
   font-size: 14px;
 }
-.feedbackId { margin-top: 10px; color: var(--muted); font-size: 11px; }
+.feedbackId { margin-top: 10px; color: var(--muted); font-size: 11px; text-align: right; }
 .emptyState {
   padding: 48px 20px;
   border: 1px dashed var(--line);
@@ -278,6 +279,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .tableWrap { overflow-x: auto; }
 .dataTable {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -285,8 +287,10 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .dataTable td {
   padding: 9px 12px;
   border-bottom: 1px solid var(--line);
-  text-align: left;
+  text-align: center;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .dataTable th {
   color: var(--muted);
@@ -298,4 +302,28 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 }
 .dataTable tbody tr:last-child td { border-bottom: none; }
 .dataTable tbody tr:hover td { background: rgba(237, 241, 255, .35); }
-.listSection {
+/* 榜单明细：前两列收窄、提交时间列加宽，列宽按内容合理分配 */
+#lbDetailTable th:nth-child(1) { width: 7%; }
+#lbDetailTable th:nth-child(2) { width: 13%; }
+#lbDetailTable th:nth-child(3) { width: 12%; }
+#lbDetailTable th:nth-child(4) { width: 15%; }
+#lbDetailTable th:nth-child(5) { width: 13%; }
+#lbDetailTable th:nth-child(6) { width: 12%; }
+#lbDetailTable th:nth-child(7) { width: 28%; }
+
+/* ===== 移动端适配 ===== */
+@media (max-width: 720px) {
+  .adminShell { padding: 24px 0 40px; }
+  .moduleHead h2 { font-size: 17px; }
+  .anaBlock { padding: 14px; }
+  .blockHead { flex-direction: column; align-items: flex-start; }
+  .lbControls { width: 100%; }
+  .dataTable { font-size: 12px; }
+  .dataTable th,
+  .dataTable td { padding: 8px 10px; }
+  /* 榜单明细：隐藏次要列（正确率、提交时间），减少横向滚动 */
+  #lbDetailTable th:nth-child(5),
+  #lbDetailTable td:nth-child(5),
+  #lbDetailTable th:nth-child(7),
+  #lbDetailTable td:nth-child(7) { display: none; }
+}
