@@ -38,6 +38,10 @@
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
 
+  const integerFormatter = new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: 0,
+  });
+
   function getShanghaiDayKey() {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Shanghai",
@@ -67,11 +71,22 @@
     tbody.replaceChildren();
   }
 
+  function countVisibleTableColumns(table) {
+    const headers = table.querySelectorAll("thead th");
+    let count = 0;
+    for (const th of headers) {
+      if (getComputedStyle(th).display !== "none") count += 1;
+    }
+    return count;
+  }
+
   function addEmptyRow(table, columns, message) {
     const tbody = table.querySelector("tbody");
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = columns;
+    // 移动端会隐藏部分列，colspan 需按实际可见列数计算，否则空行无法撑满表格宽度
+    const visible = countVisibleTableColumns(table);
+    td.colSpan = visible > 0 ? visible : columns;
     td.textContent = message;
     td.style.textAlign = "center";
     td.style.padding = "24px 12px";
@@ -209,6 +224,187 @@
     }
   }
 
+  // ---------- 动漫管理模块 ----------
+
+  const ANIME_PAGE_SIZE = 20;
+  const animeState = {
+    query: "",
+    status: "",
+    currentPage: 1,
+    total: 0,
+  };
+  let animeSearchTimerId = null;
+  const animeEls = {
+    refreshButton: document.getElementById("animeRefreshButton"),
+    search: document.getElementById("animeSearch"),
+    statusFilter: document.getElementById("animeStatusFilter"),
+    resetButton: document.getElementById("animeResetButton"),
+    totalLabel: document.getElementById("animeTotalLabel"),
+    status: document.getElementById("animeStatus"),
+    table: document.getElementById("animeTable"),
+    prevButton: document.getElementById("animePrevButton"),
+    nextButton: document.getElementById("animeNextButton"),
+    pageInfo: document.getElementById("animePageInfo"),
+  };
+
+  function setAnimeStatus(message, kind) {
+    animeEls.status.textContent = message || "";
+    animeEls.status.className = kind ? `status ${kind}` : "status";
+  }
+
+  function renderAnimeSwitchState(button, item) {
+    button.setAttribute("aria-checked", String(item.enabled));
+    button.setAttribute("aria-label", `${item.enabled ? "停用" : "启用"}番剧「${item.title}」`);
+    const text = button.querySelector(".switchText");
+    if (text) text.textContent = item.enabled ? "已启用" : "已停用";
+  }
+
+  function createStatusSwitch(item) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "statusSwitch";
+    button.setAttribute("role", "switch");
+    button.setAttribute("aria-checked", String(item.enabled));
+    button.setAttribute("aria-label", `${item.enabled ? "停用" : "启用"}番剧「${item.title}」`);
+
+    const track = document.createElement("span");
+    track.className = "track";
+    track.setAttribute("aria-hidden", "true");
+    const text = document.createElement("span");
+    text.className = "switchText";
+    text.textContent = item.enabled ? "已启用" : "已停用";
+
+    button.append(track, text);
+    button.addEventListener("click", () => void toggleAnime(item, button));
+    return button;
+  }
+
+  async function toggleAnime(item, button) {
+    button.disabled = true;
+    setAnimeStatus("正在更新…", "loading");
+    try {
+      const data = await fetchJson("/api/admin/anime", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anidbId: item.anidbId, enabled: !item.enabled }),
+      });
+      item.enabled = Boolean(data.enabled);
+      renderAnimeSwitchState(button, item);
+      setAnimeStatus(`已${item.enabled ? "启用" : "停用"}「${item.title}」，题库约 1 分钟后生效`);
+    } catch (error) {
+      setAnimeStatus(error.message || "更新失败", "error");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function buildAnimeRows(items) {
+    const tbody = animeEls.table.querySelector("tbody");
+    clearTableBody(tbody);
+    for (const item of items) {
+      const tr = document.createElement("tr");
+
+      const titleCell = document.createElement("td");
+      titleCell.className = "animeTitleCell";
+      const layout = document.createElement("div");
+      layout.className = "animeTitleLayout";
+      if (item.cover) {
+        const thumb = document.createElement("img");
+        thumb.src = item.cover;
+        thumb.alt = "";
+        thumb.loading = "lazy";
+        thumb.decoding = "async";
+        thumb.referrerPolicy = "no-referrer";
+        thumb.addEventListener("error", () => thumb.remove());
+        layout.append(thumb);
+      }
+      const texts = document.createElement("div");
+      const strong = document.createElement("strong");
+      strong.textContent = item.title;
+      strong.title = item.title;
+      texts.append(strong);
+      if (item.originalTitle) {
+        const original = document.createElement("span");
+        original.textContent = item.originalTitle;
+        original.title = item.originalTitle;
+        texts.append(original);
+      }
+      const ids = document.createElement("small");
+      ids.textContent = `Bangumi ${item.bgmId || "—"} · AniDB ${item.anidbId || "—"}`;
+      texts.append(ids);
+      layout.append(texts);
+      titleCell.append(layout);
+
+      const dateCell = document.createElement("td");
+      dateCell.dataset.label = "首播";
+      dateCell.textContent = item.date || "—";
+      const scoreCell = document.createElement("td");
+      scoreCell.dataset.label = "评分";
+      scoreCell.textContent = item.score === null || item.score === undefined ? "—" : item.score.toFixed(1);
+      const imageCell = document.createElement("td");
+      imageCell.dataset.label = "截图";
+      imageCell.textContent = integerFormatter.format(item.imageCount || 0);
+      const statusCell = document.createElement("td");
+      statusCell.dataset.label = "状态";
+      statusCell.append(createStatusSwitch(item));
+
+      tr.append(titleCell, dateCell, scoreCell, imageCell, statusCell);
+      tbody.appendChild(tr);
+    }
+  }
+
+  function renderAnimePagination() {
+    const totalPages = Math.max(1, Math.ceil(animeState.total / ANIME_PAGE_SIZE));
+    animeEls.prevButton.disabled = animeState.currentPage <= 1;
+    animeEls.nextButton.disabled = animeState.currentPage >= totalPages;
+    const start = animeState.total === 0 ? 0 : (animeState.currentPage - 1) * ANIME_PAGE_SIZE + 1;
+    const end = Math.min(animeState.total, animeState.currentPage * ANIME_PAGE_SIZE);
+    animeEls.pageInfo.textContent = `第 ${animeState.currentPage} / ${totalPages} 页 · 共 ${animeState.total} 部（显示 ${start}-${end}）`;
+    animeEls.totalLabel.textContent = animeState.total > 0 ? `共 ${animeState.total} 部番剧` : "暂无番剧";
+  }
+
+  async function loadAnime() {
+    animeEls.refreshButton.disabled = true;
+    setAnimeStatus("正在加载…", "loading");
+    const query = new URLSearchParams({
+      limit: String(ANIME_PAGE_SIZE),
+      offset: String((animeState.currentPage - 1) * ANIME_PAGE_SIZE),
+    });
+    if (animeState.query) query.set("query", animeState.query);
+    if (animeState.status) query.set("status", animeState.status);
+    try {
+      const data = await fetchJson(`/api/admin/anime?${query}`);
+      animeState.total = Number(data?.total) || 0;
+      buildAnimeRows(Array.isArray(data?.items) ? data.items : []);
+      if (!data?.items?.length) {
+        addEmptyRow(
+          animeEls.table,
+          5,
+          animeState.query || animeState.status ? "没有符合条件的番剧" : "图库为空",
+        );
+      }
+      renderAnimePagination();
+      setAnimeStatus("");
+    } catch (error) {
+      buildAnimeRows([]);
+      addEmptyRow(animeEls.table, 5, "加载失败");
+      renderAnimePagination();
+      setAnimeStatus(error.message || "加载失败", "error");
+    } finally {
+      animeEls.refreshButton.disabled = false;
+    }
+  }
+
+  function scheduleAnimeSearch() {
+    if (animeSearchTimerId !== null) clearTimeout(animeSearchTimerId);
+    animeSearchTimerId = setTimeout(() => {
+      animeSearchTimerId = null;
+      animeState.query = animeEls.search.value.trim();
+      animeState.currentPage = 1;
+      void loadAnime();
+    }, 300);
+  }
+
   // ---------- 排行榜模块 ----------
 
   const leaderboardEls = {
@@ -339,6 +535,7 @@
   const loadedModules = new Set();
   const moduleLoaders = {
     feedback: loadFeedback,
+    anime: loadAnime,
     leaderboard: loadLeaderboard,
     analytics: loadAnalytics,
   };
@@ -375,6 +572,37 @@
     if (feedbackState.currentPage < Math.ceil(feedbackState.total / PAGE_SIZE)) {
       feedbackState.currentPage += 1;
       void loadFeedback();
+    }
+  });
+
+  animeEls.refreshButton.addEventListener("click", () => void loadAnime());
+  animeEls.search.addEventListener("input", scheduleAnimeSearch);
+  animeEls.statusFilter.addEventListener("change", () => {
+    animeState.status = animeEls.statusFilter.value;
+    animeState.currentPage = 1;
+    void loadAnime();
+  });
+  animeEls.resetButton.addEventListener("click", () => {
+    // 取消尚未触发的搜索防抖，避免清空后又触发一次加载
+    if (animeSearchTimerId !== null) {
+      clearTimeout(animeSearchTimerId);
+      animeSearchTimerId = null;
+    }
+    animeEls.search.value = "";
+    animeState.query = "";
+    animeState.currentPage = 1;
+    void loadAnime();
+  });
+  animeEls.prevButton.addEventListener("click", () => {
+    if (animeState.currentPage > 1) {
+      animeState.currentPage -= 1;
+      void loadAnime();
+    }
+  });
+  animeEls.nextButton.addEventListener("click", () => {
+    if (animeState.currentPage < Math.ceil(animeState.total / ANIME_PAGE_SIZE)) {
+      animeState.currentPage += 1;
+      void loadAnime();
     }
   });
 

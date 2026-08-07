@@ -1,6 +1,6 @@
 import { GAME_CONFIG } from './js/game-config.js';
 import { createLocalQuestionProvider, filterAnime, loadCatalog, searchTags } from './js/catalog.js';
-import { HardQuestionProvider } from './js/hard-provider.js';
+import { HardQuestionProvider, clearExcludedTags } from './js/hard-provider.js';
 import { QuizEngine } from './js/quiz-engine.js';
 import { getLeaderboard, normalizeUsername, readLeaderboardProfile, saveLeaderboardProfile, submitLeaderboardResult } from './js/leaderboard.js';
 
@@ -8,9 +8,11 @@ const HARD_KEY_STORAGE = 'anime-frame-quiz.deepseek-api-key.v2';
 const GAME_GUIDE_STORAGE = 'anime-frame-quiz.game-guide-seen.v1';
 const LOCAL_COUNT = GAME_CONFIG.localQuestionCount;
 const LOCAL_MAX_SCORE = LOCAL_COUNT * Math.max(...GAME_CONFIG.scoreThresholds.map((tier) => tier.points));
+const FREE_QUESTION_OPTIONS = Object.freeze([25, 50, 75, 100]);
 const DEFAULT_FREE_FILTER = Object.freeze({
   startDate: '', endDate: '', minScore: null, maxScore: null,
   maxRank: null, minRatings: null, minDone: null, minImages: 1, tags: [], tagMode: 'any',
+  timed: true, questionCount: LOCAL_COUNT,
 });
 const MODE_META = {
   classic: { eyebrow: 'Classic Mode', title: '经典模式' },
@@ -18,9 +20,11 @@ const MODE_META = {
   hard: { eyebrow: 'Hard Challenge', title: '困难挑战' },
 };
 const DEBUG = {
-  // 调试开关：为 true 时，经典模式中会显示"一键完成 50 题"按钮，点击直接弹出结算弹窗。
+  // 调试开关：为 true 时，对应模式中会显示"一键完成 50 题"按钮，点击直接弹出结算弹窗。
   // 发布前请改为 false，按钮将不显示、也无法触发。
   classicFastFinishEnabled: false,
+  freeFastFinishEnabled: false,
+  hardFastFinishEnabled: false,
 };
 const FEEDBACK_TYPE_META = Object.freeze({
   anime_error: Object.freeze({
@@ -58,10 +62,10 @@ const ids = [
   'startScreen', 'gameScreen', 'classicModeButton', 'freeModeButton', 'startButton', 'gameGuideButton', 'homeLeaderboardButton',
   'feedbackFab', 'feedbackModal', 'feedbackCloseButton', 'feedbackForm',
   'feedbackContent', 'feedbackMessage', 'feedbackSubmitButton', 'feedbackCancelButton',
-  'backButton', 'gameModeLabel', 'gameTitle', 'debugFinishButton', 'freeFilterButton', 'finishHardButton',
+  'backButton', 'gameModeLabel', 'gameTitle', 'debugFinishButton', 'freeFilterButton',
   'progressValue', 'progressLabel', 'primaryMetric', 'primaryMetricLabel',
   'secondaryMetric', 'secondaryMetricLabel', 'timerStat', 'timerValue', 'poolStat',
-  'poolCount', 'timerTrack', 'timerBar', 'loadingLayer', 'loadingText', 'animeFrame',
+  'poolCount', 'hardHint', 'timerTrack', 'timerBar', 'loadingLayer', 'loadingText', 'animeFrame', 'framePanel',
   'statusText', 'skipButton', 'options', 'feedback', 'hardApiModal', 'hardApiCloseButton',
   'hardApiForm', 'deepSeekApiKeyInput', 'hardApiMessage', 'hardApiConfirmButton',
   'homeLeaderboardModal', 'homeLeaderboardCloseButton', 'homeLeaderboardClassicTab',
@@ -71,7 +75,7 @@ const ids = [
   'freeStartDate', 'freeEndDate', 'freeMinScore', 'freeMaxScore', 'freeMaxRank',
   'freeMinRatings', 'freeMinDone', 'freeMinImages', 'freeTagMode', 'freeTagSearch', 'freeTagResults',
   'freeSelectedTags', 'freeMatchCount', 'freeFilterMessage', 'freeFilterResetButton',
-  'freeFilterStartButton', 'profileModal', 'profileForm', 'profileUsername',
+  'freeFilterStartButton', 'freeTimed', 'freeQuestionCount', 'profileModal', 'profileForm', 'profileUsername',
   'profileMessage', 'profileSkipButton', 'resultModal', 'resultTitle', 'resultLead',
   'resultMainValue', 'resultMainLabel', 'resultCorrectValue', 'resultElapsedValue',
   'leaderboardSection', 'leaderboardDay', 'leaderboardStatus', 'leaderboardBody',
@@ -117,9 +121,8 @@ function bindEvents() {
     if (event.target === els.feedbackModal) closeFeedback();
   });
   els.backButton.addEventListener('click', showHome);
-  els.debugFinishButton.addEventListener('click', () => void debugFastFinishClassic());
+  els.debugFinishButton.addEventListener('click', () => void debugFastFinish());
   els.skipButton.addEventListener('click', () => state.engine?.skip());
-  els.finishHardButton.addEventListener('click', finishHardGame);
   els.freeFilterButton.addEventListener('click', restartFromFreeFilter);
   els.hardApiCloseButton.addEventListener('click', closeHardModal);
   els.hardApiForm.addEventListener('submit', validateAndBeginHard);
@@ -142,6 +145,8 @@ function bindEvents() {
   els.freeFilterForm.addEventListener('input', updateFreeFilterPreview);
   els.freeTagMode.addEventListener('change', updateFreeFilterPreview);
   els.freeFilterForm.addEventListener('submit', startFilteredGame);
+  els.freeTimed.addEventListener('change', updateFreeFilterPreview);
+  els.freeQuestionCount.addEventListener('click', selectFreeQuestionCount);
   els.freeTagSearch.addEventListener('focus', renderTagSearch);
   els.freeTagSearch.addEventListener('input', renderTagSearch);
   els.freeTagSearch.addEventListener('keydown', (event) => {
@@ -221,14 +226,19 @@ function showGameShell(mode) {
   els.gameModeLabel.textContent = meta.eyebrow;
   els.gameTitle.textContent = meta.title;
   els.freeFilterButton.classList.toggle('hidden', mode !== 'free');
-  els.finishHardButton.classList.toggle('hidden', mode !== 'hard');
-  els.debugFinishButton.classList.toggle('hidden', !(DEBUG.classicFastFinishEnabled && mode === 'classic'));
-  els.timerStat.classList.toggle('hidden', mode === 'hard');
-  els.timerTrack.classList.toggle('hidden', mode === 'hard');
+  els.debugFinishButton.classList.toggle('hidden', !debugFastFinishEnabled(mode));
+  const debugCount = debugFastFinishCount(mode);
+  els.debugFinishButton.textContent = mode === 'hard'
+    ? `一键完成${debugCount}题并提交（调试）`
+    : `一键完成${debugCount}题（调试）`;
+  const timed = mode === 'hard' ? false : mode === 'free' ? state.freeFilter.timed !== false : true;
+  els.timerStat.classList.toggle('hidden', !timed);
+  els.timerTrack.classList.toggle('hidden', !timed);
   els.poolStat.classList.toggle('hidden', mode !== 'hard');
+  els.hardHint.classList.toggle('hidden', mode !== 'hard');
   els.primaryMetricLabel.textContent = mode === 'hard' ? '正确率' : '得分';
   els.secondaryMetricLabel.textContent = mode === 'hard' ? '答对题数' : '正确率';
-  els.progressLabel.textContent = mode === 'hard' ? '连续作答' : '进度';
+  els.progressLabel.textContent = '进度';
   resetQuestionDisplay();
   updateStats(emptySnapshot(mode));
 }
@@ -237,10 +247,18 @@ function stopGame() {
   state.imageToken += 1;
   state.engine?.stop();
   state.provider?.stop?.();
+  // 结算回顾已渲染完成，此时才释放抽帧 Blob（stop 不再提前 revoke）
+  state.provider?.releaseBlobUrls?.();
   state.engine = null;
   state.provider = null;
   els.animeFrame.onload = null;
   els.animeFrame.onerror = null;
+  els.framePanel.querySelectorAll('video').forEach((video) => {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.remove();
+  });
 }
 
 function closeAllModals() {
@@ -251,7 +269,12 @@ function closeAllModals() {
 function openModal(element, focusTarget) {
   element.classList.remove('hidden');
   document.body.classList.add('modalOpen');
-  window.setTimeout(() => focusTarget?.focus(), 0);
+  // 弹窗为常驻 DOM，重开时会保留上次滚动位置；在弹窗渲染后的第一帧统一重置回顶部。
+  // 需要该行为的滚动容器统一添加 .modalScrollReset 标记类即可自动生效。
+  requestAnimationFrame(() => {
+    for (const scroller of element.querySelectorAll('.modalScrollReset')) scroller.scrollTop = 0;
+    focusTarget?.focus();
+  });
 }
 
 function closeModal(element) {
@@ -337,8 +360,6 @@ async function submitFeedback(event) {
   }
 }
 
-
-
 function openHomeLeaderboard() {
   state.homeLeaderboardCache.clear();
   openModal(els.homeLeaderboardModal, els.homeLeaderboardClassicTab);
@@ -411,6 +432,7 @@ async function beginClassic() {
 async function beginFreeEntry() {
   const token = ++state.launchToken;
   stopGame();
+  closeAllModals();
   state.freeFilterInitial = true;
   openFreeFilter(true);
   try {
@@ -426,22 +448,24 @@ async function beginFreeEntry() {
   }
 }
 
-async function startLocalEngine(mode, catalog, eligible) {
+async function startLocalEngine(mode, catalog, eligible, options = {}) {
   const token = state.launchToken;
   stopGame();
   resetQuestionDisplay();
+  const questionLimit = Number.isInteger(options.questionLimit) ? options.questionLimit : LOCAL_COUNT;
+  const timed = options.timed !== false;
   let provider;
   try {
     provider = createLocalQuestionProvider(
       catalog,
       eligible,
-      LOCAL_COUNT,
+      questionLimit,
       GAME_CONFIG.localPreloadCount,
     );
   } catch (error) {
     renderEngineError(error, () => {
       state.launchToken += 1;
-      void startLocalEngine(mode, catalog, eligible);
+      void startLocalEngine(mode, catalog, eligible, options);
     });
     return;
   }
@@ -454,7 +478,7 @@ async function startLocalEngine(mode, catalog, eligible) {
       provider.stop();
       return;
     }
-    const engine = createEngine({ mode, provider, questionLimit: LOCAL_COUNT, timed: true });
+    const engine = createEngine({ mode, provider, questionLimit, timed });
     state.engine = engine;
     await engine.start();
   } catch (error) {
@@ -463,7 +487,7 @@ async function startLocalEngine(mode, catalog, eligible) {
     if (token !== state.launchToken || state.mode !== mode || error.name === 'AbortError') return;
     renderEngineError(error, () => {
       state.launchToken += 1;
-      void startLocalEngine(mode, catalog, eligible);
+      void startLocalEngine(mode, catalog, eligible, options);
     });
   }
 }
@@ -550,34 +574,54 @@ async function beginHard(apiKey) {
     if (token !== state.launchToken || state.mode !== 'hard') return;
     const provider = new HardQuestionProvider({
       apiKey, catalog, batchSize: GAME_CONFIG.hard.batchSize,
-      onBufferChange: (count) => {
-        if (state.provider === provider) els.poolCount.textContent = `${count} / ${GAME_CONFIG.hard.batchSize}`;
+      // 池显示只统计已就绪的题（加载中不计入）
+      onBufferChange: (readyCount) => {
+        if (state.provider === provider) els.poolCount.textContent = `${readyCount} / ${GAME_CONFIG.hard.batchSize}`;
       },
     });
     state.provider = provider;
-    state.engine = createEngine({ mode: 'hard', provider, questionLimit: null, timed: false });
+    // 答满 minRankQuestions 道题后自动结算，与经典/自由模式一致
+    state.engine = createEngine({
+      mode: 'hard',
+      provider,
+      questionLimit: GAME_CONFIG.hard.minRankQuestions,
+      timed: false,
+    });
     await state.engine.start();
   } catch (error) {
     if (token === state.launchToken) renderEngineError(error, () => void beginHard(apiKey));
   }
 }
 
-function finishHardGame() {
-  const snapshot = state.engine?.snapshot();
-  if (state.mode === 'hard' && snapshot?.answered >= GAME_CONFIG.hard.minRankQuestions) state.engine.finish();
+function debugFastFinishCount(mode) {
+  if (mode === 'hard') return GAME_CONFIG.hard.minRankQuestions;
+  if (mode === 'free') {
+    return FREE_QUESTION_OPTIONS.includes(state.freeFilter.questionCount)
+      ? state.freeFilter.questionCount
+      : LOCAL_COUNT;
+  }
+  return LOCAL_COUNT;
 }
 
-function debugFastFinishClassic() {
-  if (state.mode !== 'classic' || !DEBUG.classicFastFinishEnabled) return;
+function debugFastFinishEnabled(mode) {
+  if (mode === 'classic') return DEBUG.classicFastFinishEnabled;
+  if (mode === 'free') return DEBUG.freeFastFinishEnabled;
+  if (mode === 'hard') return DEBUG.hardFastFinishEnabled;
+  return false;
+}
+
+function debugFastFinish() {
+  const mode = state.mode;
+  if (!debugFastFinishEnabled(mode)) return;
   state.launchToken += 1;
   stopGame();
-  const pointsPerQuestion = LOCAL_MAX_SCORE / LOCAL_COUNT;
-  const answers = Array.from({ length: LOCAL_COUNT }, (_, index) => ({
+  const count = debugFastFinishCount(mode);
+  const answers = Array.from({ length: count }, (_, index) => ({
     selectedId: String(index + 1),
     selectedTitle: `调试番剧 ${index + 1}`,
     answerId: String(index + 1),
     isCorrect: true,
-    points: pointsPerQuestion,
+    points: mode === 'hard' ? 0 : 10,
     remainingMs: 6000,
     reason: 'answer',
     question: {
@@ -589,11 +633,11 @@ function debugFastFinishClassic() {
     },
   }));
   void completeGame({
-    mode: 'classic',
-    answered: LOCAL_COUNT,
-    correct: LOCAL_COUNT,
+    mode,
+    answered: count,
+    correct: count,
     accuracy: 1,
-    score: LOCAL_MAX_SCORE,
+    score: mode === 'hard' ? 0 : count * 10,
     elapsedMs: 180000,
     stopped: true,
     completedAt: new Date().toISOString(),
@@ -606,6 +650,7 @@ function createEngine({ mode, provider, questionLimit, timed }) {
     mode, provider, questionLimit, timed,
     questionSeconds: GAME_CONFIG.questionSeconds,
     scoreTiers: GAME_CONFIG.scoreThresholds,
+    untimedCorrectPoints: mode === 'free' && !timed ? 10 : 0,
     feedbackMs: GAME_CONFIG.answerFeedbackMs,
     callbacks: {
       onLoading: (snapshot) => {
@@ -632,6 +677,26 @@ function createEngine({ mode, provider, questionLimit, timed }) {
 
 async function showDecodedQuestionImage(question) {
   const token = ++state.imageToken;
+  // 困难模式：显示已抽帧的随机帧截图（Blob URL），与普通模式共用 <img> 渲染
+  if (state.mode === 'hard') {
+    const frame = question?._videoFrame;
+    if (!frame?.video) throw new Error('这道题没有可用画面。');
+    await frame.ready;
+    if (token !== state.imageToken) throw new DOMException('图片加载已取消', 'AbortError');
+    if (frame.state.error) throw new Error(`画面加载失败：${frame.state.error.message}`);
+    const url = frame.imageBlobUrl;
+    if (!url) throw new Error('画面截图生成失败。');
+    // 抽帧完成，视频资源不再需要
+    frame.video.removeAttribute('src');
+    frame.video.load();
+    els.animeFrame.hidden = false;
+    question.imageUrl = url;
+    // 首题画面就绪，隐藏“首题稍慢”提示
+    els.hardHint.classList.add('hidden');
+    await loadAndDecodeInto(els.animeFrame, url, token);
+    return url;
+  }
+
   const candidates = [...new Set([
     question.imageUrl,
     ...(Array.isArray(question.imageCandidates) ? question.imageCandidates : []),
@@ -740,6 +805,13 @@ function setPreparing(message) {
 function resetQuestionDisplay() {
   state.imageToken += 1;
   els.animeFrame.removeAttribute('src');
+  els.animeFrame.hidden = false;
+  els.framePanel.querySelectorAll('video').forEach((video) => {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+    video.remove();
+  });
   els.timerValue.textContent = GAME_CONFIG.questionSeconds.toFixed(1);
   els.timerBar.style.transform = 'scaleX(1)';
   els.timerTrack.classList.remove('urgent');
@@ -750,15 +822,14 @@ function updateStats(snapshot) {
   if (!snapshot || snapshot.mode !== state.mode) return;
   const percent = Math.round(snapshot.accuracy * 100);
   if (state.mode === 'hard') {
-    els.progressValue.textContent = `${snapshot.answered} 题`;
+    const questionLimit = GAME_CONFIG.hard.minRankQuestions;
+    els.progressValue.textContent = `${Math.min(snapshot.answered, questionLimit)} / ${questionLimit}`;
     els.primaryMetric.textContent = `${percent}%`;
     els.secondaryMetric.textContent = `${snapshot.correct} 题`;
-    els.poolCount.textContent = `${snapshot.bufferedCount} / ${GAME_CONFIG.hard.batchSize}`;
-    els.finishHardButton.disabled = snapshot.answered < GAME_CONFIG.hard.minRankQuestions;
-    els.finishHardButton.textContent = snapshot.answered < GAME_CONFIG.hard.minRankQuestions
-      ? `答满 ${GAME_CONFIG.hard.minRankQuestions} 题后结算` : '结束并结算';
+    els.poolCount.textContent = `${state.provider?.readyCount ?? 0} / ${GAME_CONFIG.hard.batchSize}`;
   } else {
-    els.progressValue.textContent = `${Math.min(snapshot.answered, LOCAL_COUNT)} / ${LOCAL_COUNT}`;
+    const questionLimit = Number.isInteger(snapshot.questionLimit) ? snapshot.questionLimit : LOCAL_COUNT;
+    els.progressValue.textContent = `${Math.min(snapshot.answered, questionLimit)} / ${questionLimit}`;
     els.primaryMetric.textContent = String(snapshot.score);
     els.secondaryMetric.textContent = `${percent}%`;
   }
@@ -774,7 +845,13 @@ function updateTimer(remainingMs, ratio) {
 }
 
 function emptySnapshot(mode) {
-  return { mode, answered: 0, correct: 0, accuracy: 0, score: 0, bufferedCount: 0, loading: true, locked: true, current: null };
+  return {
+    mode, answered: 0, correct: 0, accuracy: 0, score: 0, bufferedCount: 0,
+    loading: true, locked: true, current: null,
+    questionLimit: mode === 'free'
+      ? (FREE_QUESTION_OPTIONS.includes(state.freeFilter.questionCount) ? state.freeFilter.questionCount : LOCAL_COUNT)
+      : LOCAL_COUNT,
+  };
 }
 
 function openFreeFilter(initial) {
@@ -796,6 +873,15 @@ function restartFromFreeFilter() {
   openFreeFilter(false);
 }
 
+function freeEngineOptions() {
+  return {
+    questionLimit: FREE_QUESTION_OPTIONS.includes(state.freeFilter.questionCount)
+      ? state.freeFilter.questionCount
+      : LOCAL_COUNT,
+    timed: state.freeFilter.timed !== false,
+  };
+}
+
 function closeFreeFilter() {
   els.freeTagResults.classList.add('hidden');
   closeModal(els.freeFilterModal);
@@ -804,7 +890,7 @@ function closeFreeFilter() {
     return;
   }
   state.launchToken += 1;
-  startLocalEngine('free', state.catalog, filterAnime(state.catalog, state.freeFilter));
+  startLocalEngine('free', state.catalog, filterAnime(state.catalog, state.freeFilter), freeEngineOptions());
 }
 
 function populateFreeFilter(filter) {
@@ -818,6 +904,20 @@ function populateFreeFilter(filter) {
   els.freeMinImages.value = String(filter.minImages || 1);
   const mode = filter.tagMode === 'all' ? 'all' : 'any';
   els.freeTagMode.value = mode;
+  els.freeTimed.checked = filter.timed !== false;
+  const count = FREE_QUESTION_OPTIONS.includes(filter.questionCount) ? filter.questionCount : LOCAL_COUNT;
+  for (const button of els.freeQuestionCount.querySelectorAll('button')) {
+    button.classList.toggle('active', Number(button.dataset.value) === count);
+  }
+}
+
+function selectFreeQuestionCount(event) {
+  const button = event.target.closest('button[data-value]');
+  if (!button) return;
+  for (const item of els.freeQuestionCount.querySelectorAll('button')) {
+    item.classList.toggle('active', item === button);
+  }
+  updateFreeFilterPreview();
 }
 
 function resetFreeFilter() {
@@ -841,6 +941,8 @@ function readFreeFilter() {
     minImages: readOptionalNumber(els.freeMinImages) ?? 1,
     tags: [...state.draftTags],
     tagMode: els.freeTagMode.value === 'all' ? 'all' : 'any',
+    timed: els.freeTimed.checked,
+    questionCount: Number(els.freeQuestionCount.querySelector('.active')?.dataset.value || LOCAL_COUNT),
   };
 }
 
@@ -867,12 +969,15 @@ function updateFreeFilterPreview() {
     return;
   }
   state.freeEligible = filterAnime(state.catalog, filter);
-  const enough = state.freeEligible.length >= LOCAL_COUNT;
+  const questionCount = FREE_QUESTION_OPTIONS.includes(filter.questionCount) ? filter.questionCount : LOCAL_COUNT;
+  const enough = state.freeEligible.length >= questionCount;
   els.freeMatchCount.textContent = `匹配 ${state.freeEligible.length} 部有截图番剧`;
   els.freeFilterStartButton.disabled = !enough;
   setFormMessage(
     els.freeFilterMessage,
-    enough ? `将从匹配结果中无放回抽取 ${LOCAL_COUNT} 部番剧。` : `至少需要 ${LOCAL_COUNT} 部，请放宽筛选条件。`,
+    enough
+      ? `将从匹配结果中无放回抽取 ${questionCount} 部番剧，${filter.timed ? `每题 ${GAME_CONFIG.questionSeconds} 秒` : '不限时'}。`
+      : `至少需要 ${questionCount} 部，请放宽筛选条件。`,
     enough ? 'success' : 'error',
   );
 }
@@ -880,13 +985,14 @@ function updateFreeFilterPreview() {
 function startFilteredGame(event) {
   event.preventDefault();
   updateFreeFilterPreview();
-  if (els.freeFilterStartButton.disabled || state.freeEligible.length < LOCAL_COUNT) return;
   const filter = readFreeFilter();
+  const questionCount = FREE_QUESTION_OPTIONS.includes(filter.questionCount) ? filter.questionCount : LOCAL_COUNT;
+  if (els.freeFilterStartButton.disabled || state.freeEligible.length < questionCount) return;
   state.freeFilter = { ...filter, tags: [...filter.tags] };
   state.freeFilterInitial = false;
   showGameShell('free');
   state.launchToken += 1;
-  startLocalEngine('free', state.catalog, state.freeEligible);
+  startLocalEngine('free', state.catalog, state.freeEligible, freeEngineOptions());
 }
 
 function renderTagSearch() {
@@ -997,12 +1103,20 @@ function skipProfile() {
 
 async function finalizeResult(result, ranked) {
   state.pendingResult = null;
+  // 一轮困难挑战已结算：清空持久化的版权标签去重记录，让新一轮从头开始去重
+  if (result.mode === 'hard') clearExcludedTags();
   els.resultTitle.textContent = result.mode === 'hard' ? '困难挑战结算' : result.mode === 'free' ? '自由练习完成' : '经典挑战完成';
   els.resultLead.textContent = result.mode === 'hard'
-    ? `连续完成 ${result.answered} 道题，已满足排行榜最低题数。` : `完整完成 ${LOCAL_COUNT} 道题，本局成绩有效。`;
+    ? `连续完成 ${result.answered} 道题，已满足排行榜最低题数。` : `完整完成 ${result.answered} 道题，本局成绩有效。`;
   const accuracy = Math.round(result.accuracy * 10000) / 100;
-  els.resultMainValue.textContent = result.mode === 'hard' ? `${accuracy}%` : `${result.score} / ${LOCAL_MAX_SCORE}`;
-  els.resultMainLabel.textContent = result.mode === 'hard' ? '正确率' : '总分';
+  if (result.mode === 'hard') {
+    els.resultMainValue.textContent = `${accuracy}%`;
+    els.resultMainLabel.textContent = '正确率';
+  } else {
+    const maxScore = result.answered * Math.max(...GAME_CONFIG.scoreThresholds.map((tier) => tier.points));
+    els.resultMainValue.textContent = `${result.score} / ${maxScore}`;
+    els.resultMainLabel.textContent = '总分';
+  }
   els.resultCorrectValue.textContent = `${result.correct} / ${result.answered}`;
   els.resultElapsedValue.textContent = formatDuration(result.elapsedMs);
   renderResultReview(result.answers);
@@ -1083,14 +1197,28 @@ function renderResultReview(answers) {
     const question = record?.question || {};
     const card = document.createElement('article');
     card.className = 'reviewCard';
-    const image = document.createElement('img');
-    image.className = 'reviewImage';
-    image.loading = 'lazy';
-    image.decoding = 'async';
-    image.referrerPolicy = 'no-referrer';
-    image.alt = `第 ${index + 1} 题截图`;
     const imageUrl = question.imageUrl || question.imageCandidates?.[0] || '';
-    if (imageUrl) image.src = imageUrl;
+    let image = null;
+    if (imageUrl) {
+      image = document.createElement('img');
+      image.className = 'reviewImage';
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      image.referrerPolicy = 'no-referrer';
+      image.alt = `第 ${index + 1} 题截图`;
+      image.src = imageUrl;
+    } else {
+      // 困难模式无静态截图，用占位样式块模拟图片展示
+      image = document.createElement('div');
+      image.className = 'reviewImage reviewImagePlaceholder';
+      image.setAttribute('aria-hidden', 'true');
+      const icon = document.createElement('span');
+      icon.className = 'reviewPlaceholderIcon';
+      icon.textContent = '▶';
+      const label = document.createElement('span');
+      label.textContent = '视频帧';
+      image.append(icon, label);
+    }
 
     const copy = document.createElement('div');
     copy.className = 'reviewCopy';
@@ -1151,7 +1279,7 @@ function replayResultMode() {
   if (mode === 'classic') void beginClassic();
   else if (mode === 'free') {
     state.launchToken += 1;
-    startLocalEngine('free', state.catalog, filterAnime(state.catalog, state.freeFilter));
+    startLocalEngine('free', state.catalog, filterAnime(state.catalog, state.freeFilter), freeEngineOptions());
   } else {
     showHome();
     openHardModal();

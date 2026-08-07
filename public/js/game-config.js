@@ -7,10 +7,12 @@ const SCORE_THRESHOLDS = Object.freeze([
 ]);
 
 const HARD_SAKUGABOORU_FILTER = Object.freeze({
-  tags: "",
+  // 负标签排除原画/线稿/分镜/制作资料类视频，确保截图是成品动画画面
+  tags: "-genga -production_materials -layout -douga -storyboard -genga_comparison",
   startDate: "",
   endDate: "",
-  minScore: null,
+  // 最低热度过滤低分/未审批内容，进一步避开制作资料帖
+  minScore: 5,
   maxScore: null,
   rating: "s",
 });
@@ -22,7 +24,7 @@ export const GAME_CONFIG = Object.freeze({
   questionSeconds: 10,
   scoreThresholds: SCORE_THRESHOLDS,
   hard: Object.freeze({
-    batchSize: 3,
+    batchSize: 20,
     minRankQuestions: 50,
     sakugabooruFilter: HARD_SAKUGABOORU_FILTER,
   }),

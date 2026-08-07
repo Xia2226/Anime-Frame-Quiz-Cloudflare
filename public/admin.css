@@ -127,7 +127,8 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   font-weight: 700;
 }
 .filterLabel select,
-.filterLabel input[type="date"] {
+.filterLabel input[type="date"],
+.filterLabel input[type="search"] {
   min-height: 34px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -135,6 +136,9 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   background: #fff;
   color: var(--ink);
   font-size: 13px;
+}
+.filterLabel input[type="search"] {
+  min-width: 200px;
 }
 /* 复用游戏页 afq-select 组件样式，仅按后台紧凑布局对齐输入框高度 */
 .filterLabel .afq-select {
@@ -277,6 +281,14 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   gap: 12px;
 }
 .tableWrap { overflow-x: auto; }
+/* 动漫管理：内容显示区域使用卡片背景，与其他模块视觉一致 */
+#module-anime .tableWrap {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 6px 20px rgba(34, 48, 83, .05);
+}
 .dataTable {
   width: 100%;
   table-layout: fixed;
@@ -311,6 +323,76 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 #lbDetailTable th:nth-child(6) { width: 12%; }
 #lbDetailTable th:nth-child(7) { width: 28%; }
 
+/* 动漫管理：番剧列放宽展示封面与标题 */
+#animeTable th:nth-child(1) { width: 42%; }
+#animeTable th:nth-child(2) { width: 13%; }
+#animeTable th:nth-child(3) { width: 10%; }
+#animeTable th:nth-child(4) { width: 10%; }
+#animeTable th:nth-child(5) { width: 13%; }
+#animeTable td.animeTitleCell { text-align: left; }
+.animeTitleLayout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.animeTitleLayout img {
+  width: 44px;
+  height: 62px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: 0 0 auto;
+  background: var(--accent-soft);
+}
+.animeTitleLayout > div { min-width: 0; }
+.animeTitleLayout strong,
+.animeTitleLayout span,
+.animeTitleLayout small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.animeTitleLayout strong { font-size: 13px; }
+.animeTitleLayout span { margin-top: 1px; color: var(--muted); font-size: 11px; }
+.animeTitleLayout small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.statusSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.statusSwitch:disabled { opacity: .55; cursor: not-allowed; }
+.statusSwitch .track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: #c7cede;
+  transition: background .16s ease;
+}
+.statusSwitch .track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(24, 32, 51, .25);
+  transition: transform .16s ease;
+}
+.statusSwitch[aria-checked="true"] .track { background: var(--success); }
+.statusSwitch[aria-checked="true"] .track::after { transform: translateX(18px); }
+.statusSwitch .switchText { font-size: 12px; font-weight: 700; }
+.statusSwitch[aria-checked="true"] .switchText { color: var(--success); }
+.statusSwitch[aria-checked="false"] .switchText { color: var(--muted); }
+
 /* ===== 移动端适配 ===== */
 @media (max-width: 720px) {
   .adminShell { padding: 24px 0 40px; }
@@ -326,4 +408,9 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   #lbDetailTable td:nth-child(5),
   #lbDetailTable th:nth-child(7),
   #lbDetailTable td:nth-child(7) { display: none; }
+  /* 动漫管理：隐藏首播与评分列，减少横向滚动 */
+  #animeTable th:nth-child(2),
+  #animeTable td:nth-child(2),
+  #animeTable th:nth-child(3),
+  #animeTable td:nth-child(3) { display: none; }
 }

@@ -5,7 +5,7 @@ let catalogPromise = null;
 export function loadCatalog() {
   if (!catalogPromise) {
     catalogPromise = fetch(CATALOG_URL, {
-      cache: "force-cache",
+      cache: "default",
       headers: { Accept: "application/json" },
     })
       .then(async (response) => {
@@ -37,6 +37,7 @@ export function filterAnime(catalog, filter = {}) {
   const minImages = finiteOr(filter.minImages, 1);
 
   return catalog.anime.filter((anime) => {
+    if (anime.enabled === false) return false;
     if (anime.nsfw) return false;
     const date = anime.date || "0000-00-00";
     if (date < startDate || date > endDate) return false;

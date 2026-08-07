@@ -326,6 +326,32 @@ button:disabled { opacity: .52; cursor: not-allowed; transform: none !important;
   transition: transform .1s linear, background .2s ease;
 }
 .timerTrack.urgent span { background: linear-gradient(90deg, #ef4444, #f97316); }
+.hardHint {
+  margin: 10px 4px 0;
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--accent-dark);
+  background: rgba(237, 241, 255, .65);
+  border: 1px solid rgba(79, 109, 245, .35);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(49, 77, 204, .12);
+}
+.hardHint strong {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--violet));
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: .04em;
+}
 .quizLayout {
   min-height: min(650px, calc(100vh - 185px));
   margin-top: 12px;
@@ -348,6 +374,15 @@ button:disabled { opacity: .52; cursor: not-allowed; transform: none !important;
   background: #101522;
 }
 .framePanel img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.framePanel video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: transparent;
+  pointer-events: none;
+}
 .loadingLayer {
   position: absolute;
   z-index: 2;
@@ -493,6 +528,97 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
 .filterForm legend { padding: 0 7px; font-size: 13px; font-weight: 850; }
 .filterGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .filterGrid label { display: grid; gap: 7px; }
+.gameSettingsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px 20px;
+}
+.gameSetting {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.gameSetting:first-child { flex: 1 1 300px; }
+.gameSetting:last-child { flex: 0 1 auto; }
+.gameSettingLabel {
+  color: #344054;
+  font-size: 12px;
+  font-weight: 750;
+}
+.segmentedControl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+.segmentedControl button {
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: color .16s ease, background .16s ease, border-color .16s ease;
+}
+.segmentedControl button:hover { color: var(--accent-dark); background: rgba(79, 109, 245, .06); }
+.segmentedControl button.active {
+  border-color: #b9c5ff;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+.timerControl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+.toggleSwitch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.toggleSwitch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.toggleTrack {
+  position: relative;
+  display: block;
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: #d7dee9;
+  transition: background .18s ease;
+}
+.toggleThumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .25);
+  transition: transform .18s ease;
+}
+.toggleSwitch input:checked + .toggleTrack { background: var(--accent); }
+.toggleSwitch input:checked + .toggleTrack .toggleThumb { transform: translateX(20px); }
+.toggleSwitch input:focus-visible + .toggleTrack { box-shadow: 0 0 0 3px rgba(79, 109, 245, .15); }
+.toggleHint { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .freeTagPicker {
   position: relative;
   display: grid;
@@ -579,7 +705,9 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
 .sectionHeading h3 { margin: 0; }
 .sectionHeading p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 .leaderboardScroller { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 13px; }
-.leaderboardTable { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* 固定均分列宽：不同模式（经典得分 / 困难正确率）数据宽度不同，避免 auto 布局导致列分布不一致；
+   table-layout: fixed 下未指定宽度的列等分剩余空间，6 列均匀分布，用户名列不会独占过宽 */
+.leaderboardTable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 12px; }
 .leaderboardTable th {
   position: sticky;
   top: 0;
@@ -588,7 +716,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   background: #f3f6fb;
   white-space: nowrap;
 }
-/* 内容居中，列宽贴合内容，避免短内容列出现大段空白 */
+/* 内容居中，超长内容省略 */
 .leaderboardTable th,
 .leaderboardTable td {
   overflow: hidden;
@@ -720,6 +848,20 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   object-fit: cover;
   border-radius: 9px;
   background: #e8edf6;
+}
+.reviewImagePlaceholder {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  background: linear-gradient(160deg, #1c2636, #111827);
+}
+.reviewImagePlaceholder .reviewPlaceholderIcon {
+  font-size: 18px;
+  line-height: 1;
+  opacity: .55;
 }
 .reviewCopy { min-width: 0; display: grid; align-content: start; gap: 6px; }
 .reviewCopy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }

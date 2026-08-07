@@ -2,7 +2,6 @@ import { GAME_CONFIG } from "./public/js/game-config.js";
 
 const SAKUGABOORU_API_URL = "https://www.sakugabooru.com/post.json";
 const SAKUGABOORU_RELATED_TAG_API_URL = "https://www.sakugabooru.com/tag/related.json";
-const ANILIST_API_URL = "https://graphql.anilist.co";
 const DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions";
 const DEEPSEEK_MODELS_API_URL = "https://api.deepseek.com/v1/models";
 const DEEPSEEK_BALANCE_API_URL = "https://api.deepseek.com/user/balance";
@@ -34,14 +33,11 @@ const LEADERBOARD_DATE_FORMATTER = new Intl.DateTimeFormat("en", {
 });
 const MAX_EXCLUDED_COPYRIGHT_TAGS = 512;
 const MAX_VIDEO_BYTES = 24 * 1024 * 1024;
-const MIN_PREVIEW_WIDTH = 280;
-const MIN_PREVIEW_HEIGHT = 150;
 const CANDIDATE_FETCH_LIMIT = 8;
 const CANDIDATE_POOL_LIMIT = 24;
 const CANDIDATE_POOL_KEY_LIMIT = 4;
 const RECENT_POST_LIMIT = 64;
 const COPYRIGHT_CACHE_LIMIT = 10000;
-const ANILIST_CACHE_LIMIT = 1000;
 const SOURCE_ATTEMPTS = 24;
 const VIDEO_EXTENSIONS = new Set(["mp4", "webm"]);
 
@@ -60,7 +56,6 @@ const DEFAULT_FILTER = {
 // These caches are operational only. Cloudflare may discard them whenever an isolate restarts.
 const candidatePools = new Map();
 const copyrightTagCache = new Map();
-const anilistCache = new Map();
 
 export default {
   async fetch(request, env, context) {
@@ -93,6 +88,23 @@ export default {
         if (!apiKey) throw httpError(400, "请先输入并确认 DeepSeek API Key");
         const body = await readJsonBody(request, 128 * 1024);
         return json({ questions: await resolveHardQuestions(body, apiKey) });
+      }
+
+      if (url.pathname === "/api/hard/video-proxy") {
+        // 浏览器 <video> 加载跨域视频不触发预检；此处防御性处理前端 fetch 视频字节的预检
+        if (request.method === "OPTIONS") {
+          return new Response(null, {
+            status: 204,
+            headers: {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "GET, OPTIONS",
+              "Access-Control-Allow-Headers": "Range",
+              "Access-Control-Max-Age": "86400",
+            },
+          });
+        }
+        requireMethod(request, "GET");
+        return await handleHardVideoProxy(request, url);
       }
 
       if (url.pathname === "/api/leaderboard") {
@@ -145,6 +157,22 @@ export default {
         }
         requireMethod(request, "GET");
         return await handleAdminFeedbackList(request, url, env);
+      }
+
+      if (url.pathname === "/api/admin/anime") {
+        if (request.method === "GET") {
+          return await handleAdminAnimeList(request, url, env);
+        }
+        if (request.method === "PUT") {
+          return await handleAdminAnimeToggle(request, url, env);
+        }
+        requireMethod(request, "GET or PUT");
+      }
+
+      // 图库资源文件由 Worker 合并管理员启停状态后返回，前台无需改动
+      if (url.pathname === "/data/anime-library.json") {
+        requireMethod(request, "GET");
+        return await handleAnimeLibrary(request, env);
       }
 
       if (url.pathname.startsWith("/api/")) {
@@ -353,6 +381,10 @@ async function createHardSources(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw httpError(400, "请求体必须是对象");
   }
+  const limit = input.limit ?? GAME_CONFIG.hard.batchSize;
+  if (!Number.isInteger(limit) || limit < 1 || limit > GAME_CONFIG.hard.batchSize) {
+    throw httpError(400, `limit 必须在 1 到 ${GAME_CONFIG.hard.batchSize} 之间`);
+  }
   const rawExclusions = input.excludeCopyrightTags ?? [];
   if (!Array.isArray(rawExclusions)) {
     throw httpError(400, "excludeCopyrightTags 必须是数组");
@@ -360,7 +392,7 @@ async function createHardSources(input) {
   const excludedCopyrightTags = normalizeExcludedCopyrightTags(rawExclusions);
   const configuredFilter = GAME_CONFIG.hard.sakugabooruFilter;
   const sources = [];
-  for (let index = 0; index < GAME_CONFIG.hard.batchSize; index += 1) {
+  for (let index = 0; index < limit; index += 1) {
     const source = await createFrameSource(
       configuredFilter.tags,
       excludedCopyrightTags,
@@ -386,40 +418,41 @@ async function resolveHardQuestions(input, apiKey) {
   }
 
   const questions = await Promise.all(input.entries.map((entry) => (
-    resolveFrameQuestion(entry.source, entry.traceResult)
+    resolveFrameQuestion(entry.source)
   )));
+
+  // 把版权标签（罗马音作品名）批量交给 DeepSeek 翻译成简体中文官方译名
   const translationTargets = questions
     .map((question, questionIndex) => ({
       questionIndex,
-      text: normalizeTitle(question.translation?.text) || normalizeTitle(question.title),
-      sourceLanguage: question.translation?.sourceLanguage || "auto",
-      needsTranslation: question.titleLanguage !== "zh" && !isLikelyChineseTitle(question.title),
+      text: question.copyrightTag,
+      needsTranslation: !isLikelyChineseTitle(question.copyrightTag),
     }))
     .filter((item) => item.needsTranslation && item.text);
 
   if (translationTargets.length > 0) {
-    const translatedTitles = await translateTitlesToChineseBatch(translationTargets, apiKey);
+    const translatedTitles = await translateCopyrightTagsToChineseBatch(translationTargets, apiKey);
     for (const target of translationTargets) {
       const translatedTitle = translatedTitles.get(target.questionIndex);
-      const question = questions[target.questionIndex];
-      question.title = translatedTitle;
-      question.titleLanguage = "zh";
-      question.titleSource = "deepseek-batch";
-      question.translation = {
-        ...question.translation,
-        translatedTitle,
-      };
+      if (translatedTitle) questions[target.questionIndex].title = translatedTitle;
     }
   }
-  return questions;
+
+  // 无版权标签或 DeepSeek 翻译失败的题目直接丢弃
+  return questions.filter((question) => {
+    if (!question.copyrightTag) return false;
+    return isLikelyChineseTitle(question.copyrightTag)
+      || question.title !== question.copyrightTag;
+  });
 }
 
-async function translateTitlesToChineseBatch(items, apiKey) {
+async function translateCopyrightTagsToChineseBatch(items, apiKey) {
   const systemPrompt = [
-    "你是动漫名称翻译助手。把输入数组中的每个标题转换为中国大陆最常用的简体中文译名。",
+    "你是动漫名称翻译助手。把输入数组中的每个罗马音作品标签转换为中国大陆最常用的简体中文官方动漫译名。",
+    "输入是下划线分隔的罗马音标签，例如 bocchi_the_rock 或 kaguya_sama_love_is_war。",
     "只输出 JSON 数组，不要 Markdown、解释或额外字段。",
     "每项格式必须是 {\"index\":数字,\"title\":\"译名\"}，index 必须与输入一致。",
-    "已经是简体中文的标题原样返回；没有官方译名时使用最常见的简体中文民间译名。",
+    "无法将标签识别为任何动漫作品时，title 返回 null。",
   ].join("\n");
   let response;
   try {
@@ -438,7 +471,6 @@ async function translateTitlesToChineseBatch(items, apiKey) {
           { role: "user", content: JSON.stringify(items.map((item) => ({
             index: item.questionIndex,
             text: item.text,
-            sourceLanguage: item.sourceLanguage,
           }))) },
         ],
         temperature: 0.1,
@@ -462,9 +494,7 @@ async function translateTitlesToChineseBatch(items, apiKey) {
     if (!Number.isInteger(index) || !expectedIndexes.has(index) || !title || title.length > 200) continue;
     result.set(index, title);
   }
-  if (result.size !== expectedIndexes.size) {
-    throw httpError(502, "DeepSeek 批量翻译结果不完整");
-  }
+  // 允许部分条目识别失败（缺失即视为翻译失败，由调用方丢弃对应题目）
   return result;
 }
 
@@ -615,6 +645,133 @@ function parseAdminFeedbackOffset(value) {
     throw httpError(400, "offset 必须是非负整数");
   }
   return offset;
+}
+
+async function handleAnimeLibrary(request, env) {
+  const data = await loadMergedAnimeLibrary(request, env);
+  // 短缓存让管理员启停操作尽快生效，同时避免每次请求都重复合并
+  return json(data, 200, {
+    "Cache-Control": "public, max-age=60, s-maxage=60",
+  });
+}
+
+async function handleAdminAnimeList(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const data = await loadMergedAnimeLibrary(request, env);
+  const anime = Array.isArray(data?.anime) ? data.anime : [];
+  const query = String(url.searchParams.get("query") || "").trim().toLocaleLowerCase("zh-CN");
+  const status = String(url.searchParams.get("status") || "").trim();
+  if (!["", "enabled", "disabled"].includes(status)) {
+    throw httpError(400, "status 必须是 enabled 或 disabled");
+  }
+  const limit = parseAdminFeedbackLimit(url.searchParams.get("limit"));
+  const offset = parseAdminFeedbackOffset(url.searchParams.get("offset"));
+  const items = anime
+    .filter((item) => {
+      if (!item || typeof item !== "object") return false;
+      const enabled = item.enabled !== false;
+      if (status === "enabled" && !enabled) return false;
+      if (status === "disabled" && enabled) return false;
+      if (query) {
+        const title = String(item.title || "").toLocaleLowerCase("zh-CN");
+        const originalTitle = String(item.originalTitle || "").toLocaleLowerCase("zh-CN");
+        const anidbId = String(item.anidbId ?? "");
+        const bgmId = String(item.bgmId ?? "");
+        if (![title, originalTitle, anidbId, bgmId].some((value) => value.includes(query))) return false;
+      }
+      return true;
+    })
+    // 默认按图库顺序倒序显示：图库中靠后的番剧排在最上面
+    .reverse()
+    .map((item) => ({
+      anidbId: String(item.anidbId ?? ""),
+      bgmId: String(item.bgmId ?? ""),
+      title: String(item.title || ""),
+      originalTitle: String(item.originalTitle || ""),
+      date: String(item.date || ""),
+      score: item.score ?? null,
+      imageCount: Array.isArray(item.imageIds) ? item.imageIds.length : 0,
+      cover: String(item.cover || ""),
+      enabled: item.enabled !== false,
+    }));
+  return json({
+    total: items.length,
+    limit,
+    offset,
+    items: items.slice(offset, offset + limit),
+  });
+}
+
+async function handleAdminAnimeToggle(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const body = await readJsonBody(request, 16 * 1024);
+  const anidbId = String(body?.anidbId ?? "").trim();
+  if (!anidbId) throw httpError(400, "anidbId 不能为空");
+  const enabled = Boolean(body?.enabled);
+  const data = await loadMergedAnimeLibrary(request, env);
+  const exists = (Array.isArray(data?.anime) ? data.anime : [])
+    .some((item) => String(item?.anidbId ?? "") === anidbId);
+  if (!exists) throw httpError(404, "图库中不存在该番剧");
+  await env.DB.prepare(`
+    INSERT INTO anime_override (anidb_id, enabled, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(anidb_id) DO UPDATE SET
+      enabled = excluded.enabled,
+      updated_at = excluded.updated_at
+  `).bind(anidbId, enabled ? 1 : 0, Date.now()).run();
+  return json({ ok: true, anidbId, enabled });
+}
+
+async function loadMergedAnimeLibrary(request, env) {
+  const data = await fetchAnimeLibraryAsset(request, env);
+  if (!data || typeof data !== "object" || !Array.isArray(data.anime)) {
+    throw httpError(502, "图库资源文件格式无效");
+  }
+  let overrides = new Map();
+  if (env.DB) {
+    try {
+      overrides = await loadAnimeOverrides(env.DB);
+    } catch (error) {
+      console.error(JSON.stringify({
+        level: "warn",
+        event: "anime_override_load_failed",
+        error: redactLogMessage(error?.message || error),
+      }));
+    }
+  }
+  if (overrides.size > 0) {
+    for (const anime of data.anime) {
+      if (!anime || typeof anime !== "object") continue;
+      const override = overrides.get(String(anime.anidbId ?? anime.bgmId ?? ""));
+      if (override !== undefined) anime.enabled = override;
+    }
+  }
+  return data;
+}
+
+async function fetchAnimeLibraryAsset(request, env) {
+  if (!env.ASSETS) throw httpError(500, "静态资源绑定不可用");
+  const assetUrl = new URL("/data/anime-library.json", request.url);
+  const assetResponse = await env.ASSETS.fetch(new Request(assetUrl, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  }));
+  if (!assetResponse.ok) {
+    throw httpError(
+      assetResponse.status === 404 ? 404 : 502,
+      assetResponse.status === 404 ? "图库资源文件不存在" : "图库资源读取失败",
+    );
+  }
+  return assetResponse.json();
+}
+
+async function loadAnimeOverrides(db) {
+  const result = await db.prepare("SELECT anidb_id, enabled FROM anime_override").all();
+  const overrides = new Map();
+  for (const row of result.results || []) {
+    overrides.set(String(row.anidb_id), Number(row.enabled) === 1);
+  }
+  return overrides;
 }
 
 async function handleTrackView(request, env) {
@@ -954,24 +1111,20 @@ async function createFrameSource(customTags, excludedCopyrightTags, filterConfig
   for (let attempt = 0; attempt < SOURCE_ATTEMPTS; attempt += 1) {
     const post = await takeCandidate(pool, tags);
     post.copyrightTags = await resolveCopyrightTags(post.tags);
+    if (post.copyrightTags.length === 0) {
+      // 没有版权标签的帖子（如原创动画）无法确定作品名
+      skipped += 1;
+      continue;
+    }
     if (post.copyrightTags.some((tag) => excludedCopyrightTags.has(tag))) {
       skipped += 1;
       continue;
     }
 
-    const previewUsable = post.previewUrl
-      && (!post.previewWidth || post.previewWidth >= MIN_PREVIEW_WIDTH)
-      && (!post.previewHeight || post.previewHeight >= MIN_PREVIEW_HEIGHT);
     return {
       id: String(post.id),
-      traceInputUrl: previewUsable ? post.previewUrl : post.fileUrl,
-      traceInputType: previewUsable ? "preview" : "video-fallback",
-      previewQuality: previewUsable ? {
-        accepted: true,
-        width: post.previewWidth,
-        height: post.previewHeight,
-        reason: "元数据尺寸检查通过",
-      } : null,
+      // 题面由浏览器端经 /api/hard/video-proxy 代理加载视频（注入 CORS 头），随机暂停后用 canvas 抽帧
+      videoUrl: post.fileUrl,
       sakugabooru: {
         id: post.id,
         tags: post.tags,
@@ -984,54 +1137,63 @@ async function createFrameSource(customTags, excludedCopyrightTags, filterConfig
       skippedCopyrightCandidates: skipped,
     };
   }
-  throw httpError(503, `连续 ${SOURCE_ATTEMPTS} 个候选均与近期作品重复，请稍后重试`);
+  throw httpError(503, `连续 ${SOURCE_ATTEMPTS} 个候选均不符合题目要求，请稍后重试`);
 }
 
-async function resolveFrameQuestion(source, traceResult) {
+async function resolveFrameQuestion(source) {
   const sourceId = Number(source?.sakugabooru?.id || source?.id);
   if (!Number.isInteger(sourceId) || sourceId <= 0) throw httpError(400, "题目来源无效");
-  const image = validateTraceMediaUrl(traceResult?.image, "识别图片");
-  const video = traceResult?.video ? validateTraceMediaUrl(traceResult.video, "识别视频") : null;
-  const titles = await resolveAnimeTitles(traceResult);
+  // 本接口只负责标题解析；题面由浏览器端经代理加载该视频并抽帧展示
+  const video = validateSakugabooruVideo(source?.videoUrl, "题目视频");
+  const copyrightTag = String(source?.sakugabooru?.copyrightTags?.[0] || "").trim();
   return {
     id: `${sourceId}-${crypto.randomUUID()}`,
-    title: titles.title,
-    originalTitle: titles.originalTitle,
-    japaneseTitle: titles.japaneseTitle,
-    englishTitle: titles.englishTitle,
-    titleLanguage: titles.titleLanguage,
-    titleSource: titles.titleSource,
-    translation: titles.translation,
-    image,
-    traceImage: image,
+    title: copyrightTag, // 先用罗马音标签占位，翻译阶段替换为简体中文官方译名
     video,
-    episode: traceResult?.episode ?? null,
-    from: traceResult?.from ?? null,
-    capturedAt: 0,
-    similarity: Number(traceResult?.similarity) || 0,
-    source: "sakugabooru-tracemoe-browser",
+    copyrightTag,
+    source: "sakugabooru-deepseek",
     sourceUrl: `https://www.sakugabooru.com/post/show/${sourceId}`,
-    anilistId: titles.anilist?.id || null,
-    anilist: titles.anilist,
     sakugabooru: {
       id: sourceId,
       tags: String(source?.sakugabooru?.tags || "").slice(0, 10000),
       copyrightTags: [...normalizeExcludedCopyrightTags(source?.sakugabooru?.copyrightTags)],
       score: source?.sakugabooru?.score ?? null,
       source: String(source?.sakugabooru?.source || "").slice(0, 2000),
-      traceInputType: source?.traceInputType === "preview" ? "preview" : "video-fallback",
-      previewQuality: source?.previewQuality || null,
     },
   };
 }
 
-function validateTraceMediaUrl(value, label) {
+// 视频代理：注入 CORS 头并透传 Range，使浏览器端 <video> 加载后能用 canvas 抽帧
+async function handleHardVideoProxy(request, url) {
+  const target = url.searchParams.get("url");
+  const videoUrl = validateSakugabooruVideo(target, "代理视频地址");
+  const range = request.headers.get("Range");
+  const upstream = new Request(videoUrl, {
+    method: "GET",
+    headers: range ? { Range: range } : {},
+    redirect: "follow",
+  });
+  const response = await fetch(upstream);
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Cache-Control", "public, max-age=3600");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function validateSakugabooruVideo(value, label) {
   try {
     const url = new URL(value);
     const hostname = url.hostname.toLowerCase();
-    if (url.protocol !== "https:" || (hostname !== "trace.moe" && !hostname.endsWith(".trace.moe"))) {
-      throw new Error();
-    }
+    const extension = url.pathname.split(".").pop()?.toLowerCase();
+    if (
+      url.protocol !== "https:"
+      || (hostname !== "sakugabooru.com" && !hostname.endsWith(".sakugabooru.com"))
+      || !["mp4", "webm"].includes(extension)
+    ) throw new Error();
     return url.toString();
   } catch {
     throw httpError(400, `${label}地址无效`);
@@ -1086,10 +1248,6 @@ function normalizeVideoPost(item) {
   if (!Number.isInteger(id) || id <= 0 || !VIDEO_EXTENSIONS.has(extension)) return null;
   if (!Number.isFinite(fileSize) || fileSize <= 0 || fileSize > MAX_VIDEO_BYTES) return null;
   try {
-    let previewUrl = null;
-    try {
-      previewUrl = validateSakugabooruUrl(item.preview_url, new Set(["jpg", "jpeg"]));
-    } catch {}
     return {
       id,
       fileUrl: validateSakugabooruUrl(item.file_url, VIDEO_EXTENSIONS),
@@ -1097,9 +1255,6 @@ function normalizeVideoPost(item) {
       tags: String(item.tags || ""),
       score: item.score ?? null,
       source: String(item.source || ""),
-      previewUrl,
-      previewWidth: Number(item.actual_preview_width || item.preview_width) || null,
-      previewHeight: Number(item.actual_preview_height || item.preview_height) || null,
     };
   } catch {
     return null;
@@ -1202,7 +1357,7 @@ function normalizeSakugabooruTags(customTags, filterConfig = DEFAULT_FILTER) {
     .filter((tag) => /^[a-zA-Z0-9_:\-.]+$/.test(tag))
     .filter((tag) => tag.replace(/^-/, "") !== "animated")
     .filter((tag) => !/^(order|rating|score|date):/i.test(tag))
-    .slice(0, 4);
+    .slice(0, 8);
   const { startDate, endDate, minScore, maxScore, rating } = validateFilter(filterConfig);
   const filters = [];
   if (startDate && endDate) filters.push(`date:${startDate}..${endDate}`);
@@ -1213,75 +1368,6 @@ function normalizeSakugabooruTags(customTags, filterConfig = DEFAULT_FILTER) {
   else if (maxScore !== null) filters.push(`score:<=${maxScore}`);
   if (rating) filters.push(`rating:${rating}`);
   return [...custom, "animated", ...filters, "order:random"].join(" ");
-}
-
-async function resolveAnimeTitles(traceResult) {
-  let media = traceResult?.anilist && typeof traceResult.anilist === "object" ? traceResult.anilist : {};
-  const id = Number(media.id || traceResult?.anilist);
-  if (Number.isInteger(id) && id > 0 && !Object.values(media.title || {}).some(normalizeTitle)) {
-    try {
-      const detailed = await fetchAniListById(id);
-      media = { ...media, ...detailed, title: { ...(media.title || {}), ...(detailed.title || {}) } };
-    } catch (error) {
-      console.warn(`AniList 详情读取失败 (${id}): ${error.message}`);
-    }
-  }
-  if (media.isAdult === true) throw httpError(400, "识别结果为成人内容，已跳过");
-  const title = media.title || {};
-  const originalTitle = normalizeTitle(title.romaji)
-    || normalizeTitle(title.english)
-    || normalizeTitle(title.native)
-    || cleanFilename(traceResult?.filename);
-  if (!originalTitle) throw httpError(400, "未获取到番剧名称");
-  const chineseTitle = findChineseTitle(media);
-  const sourceText = normalizeTitle(title.native)
-    || normalizeTitle(title.english)
-    || normalizeTitle(title.romaji)
-    || originalTitle;
-  const sourceLanguage = title.native ? "ja" : title.english ? "en" : "auto";
-  return {
-    title: chineseTitle || originalTitle,
-    originalTitle,
-    japaneseTitle: normalizeTitle(title.native),
-    englishTitle: normalizeTitle(title.english),
-    titleLanguage: chineseTitle ? "zh" : "original",
-    titleSource: chineseTitle ? "trace-chinese-title" : "original",
-    translation: { cacheKey: `${sourceLanguage}:${sourceText}`, text: sourceText, sourceLanguage },
-    anilist: Object.keys(media).length ? media : null,
-  };
-}
-
-async function fetchAniListById(id) {
-  if (anilistCache.has(id)) {
-    const cached = anilistCache.get(id);
-    anilistCache.delete(id);
-    anilistCache.set(id, cached);
-    return cached;
-  }
-  const query = `query ($id: Int!) { Media(id: $id, type: ANIME) { id idMal countryOfOrigin isAdult title { romaji english native } synonyms } }`;
-  const response = await fetchWithRetry(ANILIST_API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ query, variables: { id } }),
-  }, { attempts: 1, label: "AniList", timeoutMs: 6000 });
-  const data = await readJsonResponse(response, 256 * 1024, "AniList");
-  if (data?.errors?.length || !data?.data?.Media) {
-    throw new Error(data?.errors?.[0]?.message || "未找到番剧");
-  }
-  anilistCache.set(id, data.data.Media);
-  trimCache(anilistCache, ANILIST_CACHE_LIMIT);
-  return data.data.Media;
-}
-
-function findChineseTitle(media = {}) {
-  const title = media.title && typeof media.title === "object" ? media.title : {};
-  for (const candidate of [...(Array.isArray(media.synonyms) ? media.synonyms : []), title.native, title.english, title.romaji]) {
-    const normalized = normalizeTitle(candidate);
-    if (/\p{Script=Han}/u.test(normalized) && !/[\u3040-\u30ff\u31f0-\u31ff\u1100-\u11ff\uac00-\ud7af]/u.test(normalized)) {
-      return normalized;
-    }
-  }
-  return "";
 }
 
 function isLikelyChineseTitle(value) {
@@ -1389,9 +1475,9 @@ function withSecurityHeaders(response) {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self'",
-    "img-src 'self' data: blob: https://cdni.fancaps.net https://trace.moe https://*.trace.moe",
-    "media-src 'self' https://trace.moe https://*.trace.moe",
-    "connect-src 'self' https://api.trace.moe",
+    "img-src 'self' data: blob: https://cdni.fancaps.net https://sakugabooru.com https://*.sakugabooru.com",
+    "media-src 'self' blob: https://sakugabooru.com https://*.sakugabooru.com",
+    "connect-src 'self'",
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
@@ -1428,17 +1514,6 @@ function normalizeTitle(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function cleanFilename(value) {
-  return normalizeTitle(value)
-    .replace(/\.[^.]+$/, "")
-    .replace(/\[[^\]]*]/g, "")
-    .replace(/\([^)]*\)/g, "")
-    .replace(/[_-]+/g, " ")
-    .replace(/\b\d{1,4}\b/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function shuffle(items) {
   const copy = [...items];
   for (let index = copy.length - 1; index > 0; index -= 1) {
@@ -1446,10 +1521,6 @@ function shuffle(items) {
     [copy[index], copy[other]] = [copy[other], copy[index]];
   }
   return copy;
-}
-
-function trimCache(cache, maximumSize) {
-  while (cache.size > maximumSize) cache.delete(cache.keys().next().value);
 }
 
 function delay(milliseconds) {

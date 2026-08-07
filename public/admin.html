@@ -21,6 +21,7 @@
 
       <nav class="adminNav" aria-label="后台模块">
         <button type="button" class="navItem active" data-module="feedback">问题反馈</button>
+        <button type="button" class="navItem" data-module="anime">动漫管理</button>
         <button type="button" class="navItem" data-module="leaderboard">排行榜</button>
         <button type="button" class="navItem" data-module="analytics">访问统计</button>
       </nav>
@@ -108,6 +109,49 @@
               </table>
             </div>
           </div>
+        </section>
+
+        <section id="module-anime" class="modulePanel hidden">
+          <div class="moduleHead">
+            <h2>动漫管理</h2>
+            <button id="animeRefreshButton" class="btn primary" type="button">刷新</button>
+          </div>
+          <div class="toolbar">
+            <label class="filterLabel" for="animeSearch">
+              搜索
+              <input id="animeSearch" type="search" placeholder="标题 / 原名 / 番剧 ID" autocomplete="off" />
+              <button id="animeResetButton" class="btn" type="button">重置</button>
+            </label>
+            <label class="filterLabel" for="animeStatusFilter">
+              状态
+              <select id="animeStatusFilter" data-afq-select>
+                <option value="">全部</option>
+                <option value="enabled">已启用</option>
+                <option value="disabled">已停用</option>
+              </select>
+            </label>
+            <p id="animeTotalLabel" class="totalLabel" role="status"></p>
+          </div>
+          <p id="animeStatus" class="status" role="status"></p>
+          <div class="tableWrap">
+            <table class="dataTable" id="animeTable">
+              <thead>
+                <tr>
+                  <th>番剧</th>
+                  <th>首播</th>
+                  <th>评分</th>
+                  <th>截图</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <footer class="pagination">
+            <button id="animePrevButton" class="btn" type="button">上一页</button>
+            <span id="animePageInfo" class="pageInfo"></span>
+            <button id="animeNextButton" class="btn" type="button">下一页</button>
+          </footer>
         </section>
 
         <section id="module-analytics" class="modulePanel hidden">

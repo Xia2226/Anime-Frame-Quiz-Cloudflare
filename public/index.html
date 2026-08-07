@@ -97,7 +97,7 @@
                 <span class="heroTitleSub">从一帧画面，认出一部动画</span>
               </h1>
               <p class="heroDescription">
-                经典模式比拼速度，自由模式按喜好筛选，困难挑战用在线识图考验阅片量。
+                经典模式比拼速度，自由模式按喜好筛选，困难挑战用在线随机画面考验阅片量。
               </p>
             </div>
             <div class="modeGrid" role="group" aria-label="选择游戏模式">
@@ -203,20 +203,12 @@
                 AniDB
               </a>
               ；困难题源：
-              <a
-                href="https://www.sakugabooru.com/"
-                target="_blank"
-                rel="noreferrer"
-              >
+              <a href="https://www.sakugabooru.com/" target="_blank" rel="noreferrer">
                 Sakugabooru
               </a>
               ·
-              <a href="https://trace.moe/" target="_blank" rel="noreferrer">
-                trace.moe
-              </a>
-              ·
-              <a href="https://anilist.co/" target="_blank" rel="noreferrer">
-                AniList
+              <a href="https://www.deepseek.com/" target="_blank" rel="noreferrer">
+                DeepSeek
               </a>
             </p>
             <div class="footerLinkRow">
@@ -304,14 +296,6 @@
             >
               重新筛选
             </button>
-            <button
-              id="finishHardButton"
-              class="primaryButton hidden"
-              type="button"
-              disabled
-            >
-              结束并结算
-            </button>
           </div>
         </header>
         <section class="statsBar">
@@ -332,15 +316,16 @@
             <small>剩余秒数</small>
           </div>
           <div id="poolStat" class="statItem hidden">
-            <span id="poolCount">0 / 3</span>
-            <small>待答题池</small>
+            <span id="poolCount">0 / 20</span>
+            <small>就绪题池</small>
           </div>
         </section>
         <div id="timerTrack" class="timerTrack">
           <span id="timerBar"></span>
         </div>
+        <div id="hardHint" class="hardHint hidden"><strong>提示</strong><span>困难模式为在线随机取题，开始答题前需加载画面，首题可能稍慢，请耐心等待；之后题目将自动预加载，可流畅作答。</span></div>
         <section class="quizLayout">
-          <div class="framePanel">
+          <div class="framePanel" id="framePanel">
             <div id="loadingLayer" class="loadingLayer">
               <span class="spinner"></span>
               <p id="loadingText">正在准备题目…</p>
@@ -455,7 +440,7 @@
             请选择排行榜模式
           </p>
         </div>
-        <div class="leaderboardScroller homeLeaderboardScroller">
+        <div class="leaderboardScroller homeLeaderboardScroller modalScrollReset">
           <table class="leaderboardTable">
             <thead>
               <tr>
@@ -494,13 +479,13 @@
             ×
           </button>
         </header>
-        <div class="gameGuideContent modalScrollRegion">
+        <div class="gameGuideContent modalScrollRegion modalScrollReset">
           <section>
             <h3>项目介绍</h3>
             <p>
               这是一个根据动画截图猜番名的小游戏。经典和自由模式使用本项目构建的
               Fancaps 截图库与 Bangumi
-              基础资料；困难挑战使用在线随机题源和识图服务。
+              基础资料；困难挑战使用在线随机题源，从动画视频中抽取随机画面生成题目。
             </p>
           </section>
           <section>
@@ -514,12 +499,13 @@
               <li>
                 <strong>自由模式：</strong>
                 可按首播时间、评分、排名、热度、截图数和 Bangumi
-                标签筛选题库，计时计分规则与经典模式相同，但不参与排行榜。
+                标签筛选题库，并可自由选择题目数量（25/50/75/100
+                题）与是否计时；开启计时时计分规则与经典模式相同，但不参与排行榜。
               </li>
               <li>
                 <strong>困难挑战：</strong>
-                使用在线识图生成题目，不限时；连续完成至少 50
-                题后，可按正确率参与每日排行榜。
+                使用在线随机题源，从动画视频中抽取随机一帧作为题面，不限时；连续完成至少
+                50 题后，可按正确率参与每日排行榜。首次答题前需先加载画面，可能稍慢，之后会自动预加载。
               </li>
             </ul>
           </section>
@@ -641,7 +627,38 @@
           </button>
         </header>
         <form id="freeFilterForm" class="filterForm">
-          <div class="filterScrollArea">
+          <div class="filterScrollArea modalScrollReset">
+            <fieldset>
+              <legend>游戏设置</legend>
+              <div class="gameSettingsRow">
+                <div class="gameSetting">
+                  <span class="gameSettingLabel">题目数量</span>
+                  <div
+                    id="freeQuestionCount"
+                    class="segmentedControl"
+                    role="group"
+                    aria-label="题目数量"
+                  >
+                    <button type="button" data-value="25">25 题</button>
+                    <button type="button" data-value="50" class="active">50 题</button>
+                    <button type="button" data-value="75">75 题</button>
+                    <button type="button" data-value="100">100 题</button>
+                  </div>
+                </div>
+                <div class="gameSetting">
+                  <span class="gameSettingLabel">限时作答</span>
+                  <span class="timerControl">
+                    <label class="toggleSwitch">
+                      <input id="freeTimed" type="checkbox" checked />
+                      <span class="toggleTrack" aria-hidden="true">
+                        <span class="toggleThumb"></span>
+                      </span>
+                    </label>
+                    <span class="toggleHint">每题 10 秒</span>
+                  </span>
+                </div>
+              </div>
+            </fieldset>
             <fieldset>
               <legend>基础范围</legend>
               <div class="filterGrid">
@@ -817,7 +834,7 @@
           <h2 id="resultTitle">本局完成</h2>
           <p id="resultLead"></p>
         </header>
-        <div class="resultScrollArea">
+        <div class="resultScrollArea modalScrollReset">
           <div class="resultMetrics">
             <div>
               <span id="resultMainValue">0</span>

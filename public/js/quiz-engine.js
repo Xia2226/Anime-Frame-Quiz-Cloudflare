@@ -14,6 +14,7 @@ export class QuizEngine {
     this.timed = options.timed === true;
     this.questionSeconds = Number(options.questionSeconds) || 10;
     this.scoreTiers = Array.isArray(options.scoreTiers) ? options.scoreTiers : DEFAULT_SCORE_TIERS;
+    this.untimedCorrectPoints = Number(options.untimedCorrectPoints) || 0;
     this.feedbackMs = Number(options.feedbackMs) || 750;
     this.callbacks = options.callbacks || {};
     this.generation = 0;
@@ -100,8 +101,8 @@ export class QuizEngine {
       : spentMs;
     const isCorrect = effectiveSelectedId !== null
       && String(effectiveSelectedId) === String(this.current.answerId);
-    const points = isCorrect && this.timed
-      ? calculateScore(remainingMs / 1000, this.scoreTiers)
+    const points = isCorrect
+      ? (this.timed ? calculateScore(remainingMs / 1000, this.scoreTiers) : this.untimedCorrectPoints)
       : 0;
 
     this.locked = true;

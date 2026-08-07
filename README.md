@@ -4,7 +4,7 @@
 
 一个部署在 Cloudflare Workers + Static Assets 上的动漫截图问答游戏。项目提供经典模式、自由模式和困难挑战，并使用 Cloudflare D1 维护每日排行榜。
 
-经典模式与自由模式完全基于构建期生成的精简题库运行；浏览器不会在运行时读取约 1 GB 的 Bangumi 原始数据，也不会逐题请求 Worker。困难挑战沿用 Sakugabooru、trace.moe、AniList 与 DeepSeek 识别链路，但对题源和解析请求做了批处理，以尽量节省 Cloudflare 免费额度。
+经典模式与自由模式完全基于构建期生成的精简题库运行；浏览器不会在运行时读取约 1 GB 的 Bangumi 原始数据，也不会逐题请求 Worker。困难挑战从 Sakugabooru 随机取帧，把帖子的版权标签（作品名）交给 DeepSeek 翻译为简体中文标题来生成题目，并对题源和解析请求做了批处理，以尽量节省 Cloudflare 免费额度。
 
 ## 游戏模式
 
@@ -30,18 +30,18 @@
 
 进入页面时会先打开筛选面板。可按首播日期、Bangumi 评分、排名、评分人数、完成人数、截图数量和标签组合筛选；标签输入至少两个字符后才进行模糊匹配并展示候选结果。
 
-确认筛选后，从符合条件且有截图的番剧中生成一局 50 题。游戏中可从右上角重新打开筛选面板；确认新条件会结束当前进度并立即开始新一局。计时、计分与经典模式相同。
+确认筛选后，从符合条件且有截图的番剧中生成一局题目。题目数量可在 25 / 50 / 75 / 100 题中选择，也可关闭每题 10 秒的限时倒计时；开启计时时计分规则与经典模式相同，答对按剩余时间获得 10、8、6、4 或 2 分。游戏中可从右上角重新打开筛选面板；确认新条件会结束当前进度并立即开始新一局。
 
 自由模式的筛选条件由玩家自定义，成绩不可直接比较，因此作为练习模式，不参与每日排行榜。
 
 ### 困难挑战
 
-困难挑战保留原识图玩法。点击入口后必须先在弹窗中填写 DeepSeek API Key，并点击“确认”。确认时同时校验：
+困难挑战从 Sakugabooru 随机获取带版权标签（作品名）的动画视频，由浏览器端把视频随机暂停在某一帧并截取为题面，再把版权标签交给 DeepSeek 翻译为简体中文标题生成题目。点击入口后必须先在弹窗中填写 DeepSeek API Key，并点击“确认”。确认时同时校验：
 
 - Key 可以访问所需模型；
 - 人民币余额可读取且严格大于 1 元。
 
-只有校验通过才进入游戏并开始加载题目。Key 由访问者提供，仅用于本次浏览器会话中的校验和困难模式解析请求，不写入 D1、项目文件或接口响应。
+只有校验通过才进入游戏并开始加载题目。Key 由访问者提供，仅用于本次浏览器会话中的校验和困难模式解析请求，不写入 D1、项目文件或接口响应。题目画面在进入困难模式后由浏览器并行预加载，谁先就绪谁先展示；视频加载或截帧失败的题目会自动剔除并补充新题。
 
 困难挑战不采用经典模式的分数排名。连续完成至少 50 题后，成绩才有资格按正确率进入排行榜；正确率相同时依次比较答题数量、用时和完成时间。
 
@@ -95,9 +95,9 @@ npm run check:data
 - 排行榜只在打开或结算时读取，合格对局只提交一次；榜单 GET 在边缘缓存 30 秒。
 - D1 通过主键 upsert 维护每日最好成绩，避免把每次挑战都保存为新记录。
 - Cron 每天只执行一次清理，排行榜历史默认保留 7 天，不让无用旧记录持续占用 D1。
-- 困难挑战一次批量获取 3 个候选题源，并批量解析，减少 Worker 往返。
-- trace.moe 由访问者浏览器直连，请求不经过 Worker，也不会让所有用户共享 Cloudflare 出口 IP 的匿名额度。
-- Sakugabooru 候选池和 AniList 结果在 Worker 实例内做有界缓存；实例回收只会丢失性能缓存，不影响用户数据。
+- 困难挑战一次批量获取 20 个候选题源，并批量翻译版权标签，减少 Worker 往返。
+- 题目视频经 Worker 视频代理加载（注入 CORS 头并透传 Range），由浏览器抽帧展示题面。
+- Sakugabooru 候选池在 Worker 实例内做有界缓存；实例回收只会丢失性能缓存，不影响用户数据。
 - Static Assets 直接提供页面与题库，只有 `/api/*` 进入 Worker；日志和链路追踪采用低采样率。
 
 ## 开发者统一配置
@@ -150,7 +150,10 @@ npm run deploy
 | --- | --- | --- |
 | `/api/deepseek/validate` | POST | 校验访问者 Key、模型权限和人民币余额 |
 | `/api/hard/sources` | POST | 批量获取困难挑战候选题源 |
-| `/api/hard/resolve` | POST | 批量整理识图结果并生成题目 |
+| `/api/hard/resolve` | POST | 批量翻译版权标签并生成题目 |
+| `/api/hard/video-proxy` | GET | 代理 Sakugabooru 视频并注入 CORS 头，供浏览器抽帧 |
+| `/data/anime-library.json` | GET | 合并管理员启停状态后的精简题库 |
+| `/api/admin/anime` | GET / PUT | 管理员查询番剧列表、启停番剧 |
 | `/api/leaderboard?mode=classic\|hard` | GET | 获取指定模式的当日榜单 |
 | `/api/leaderboard?mode=classic\|hard` | POST | 提交一局满足条件的成绩并返回当日榜单 |
 
@@ -160,7 +163,10 @@ DeepSeek Key 通过 `X-DeepSeek-Api-Key` 请求头传递。Worker 对请求体�
 
 ```text
 ├── migrations/
-│   └── 0001_daily_best.sql       # 每日最佳成绩表与排序索引
+│   ├── 0001_daily_best.sql       # 每日最佳成绩表与排序索引
+│   ├── 0002_feedback.sql         # 问题反馈表
+│   ├── 0003_analytics.sql        # 访问统计表
+│   └── 0004_anime_override.sql   # 番剧启停覆盖表
 ├── public/
 │   ├── data/anime-library.json   # 构建生成的精简题库
 │   ├── data/anime-library-old.json # 上一版题库，用于统计新增数据
@@ -190,12 +196,12 @@ DeepSeek Key 通过 `X-DeepSeek-Api-Key` 请求头传递。Worker 对请求体�
 
 ## 安全与第三方边界
 
-- 页面 CSP 只允许必要的同域 API、trace.moe 和截图资源。
-- 浏览器仅直连已支持 CORS 的 trace.moe；Sakugabooru、AniList 和 DeepSeek 请求由 Worker 发起。
+- 页面 CSP 只允许必要的同域 API、Sakugabooru 图片/视频等资源。
+- Sakugabooru 素材抓取与 DeepSeek 翻译请求由 Worker 发起；题目视频经 Worker 视频代理加载后由浏览器抽帧展示题面，浏览器不直连 Sakugabooru。
 - API Key 不应写入源码、URL 查询参数、D1 或 Cloudflare 配置文件。
 - 当前排行榜是休闲榜：Worker 会校验题量、正确数、可达分数和用时范围，但无法证明公开浏览器客户端没有被修改。若公开站点需要对抗恶意刷榜或接口滥用，应在 Cloudflare 前置 Turnstile/Rate Limiting，并进一步采用服务端签发挑战票据；这些措施需要额外站点密钥或平台配置，当前版本未默认启用。
-- trace.moe 的匿名额度按访问者公网出口 IP 计算；同一家庭、学校、公司或 VPN 用户仍可能共享额度。
-- 上线前请确认 Fancaps、Sakugabooru、trace.moe、AniList、Bangumi 和 DeepSeek 的使用条款及额度限制。
+- 困难模式标题翻译按访问者自带的 DeepSeek Key 计费；Key 仅存于当前会话（sessionStorage），不写入服务器。
+- 上线前请确认 Fancaps、Sakugabooru、Bangumi、AniDB 和 DeepSeek 的使用条款及额度限制。
 
 ## 免责声明
 

@@ -155,6 +155,8 @@
       document.body.appendChild(state.panel);
     }
     positionPanel(state);
+    // 程序化赋值 .value（如重置按钮）后，重新标记选中态，保证高亮与实际值一致
+    markSelected(state.select, state.panel);
     state.panel.hidden = false;
   }
 
