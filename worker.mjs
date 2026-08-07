@@ -32,7 +32,7 @@ const LEADERBOARD_DATE_FORMATTER = new Intl.DateTimeFormat("en", {
   year: "numeric", month: "2-digit", day: "2-digit",
 });
 const MAX_EXCLUDED_COPYRIGHT_TAGS = 512;
-const MAX_VIDEO_BYTES = 24 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 15 * 1024 * 1024;
 const CANDIDATE_FETCH_LIMIT = 8;
 const CANDIDATE_POOL_LIMIT = 24;
 const CANDIDATE_POOL_KEY_LIMIT = 4;

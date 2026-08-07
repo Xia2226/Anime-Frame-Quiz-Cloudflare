@@ -24,7 +24,7 @@ export const GAME_CONFIG = Object.freeze({
   questionSeconds: 10,
   scoreThresholds: SCORE_THRESHOLDS,
   hard: Object.freeze({
-    batchSize: 20,
+    batchSize: 10,
     minRankQuestions: 50,
     sakugabooruFilter: HARD_SAKUGABOORU_FILTER,
   }),
