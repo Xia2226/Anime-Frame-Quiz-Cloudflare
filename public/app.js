@@ -17,6 +17,11 @@ const MODE_META = {
   free: { eyebrow: 'Free Mode', title: '自由模式' },
   hard: { eyebrow: 'Hard Challenge', title: '困难挑战' },
 };
+const DEBUG = {
+  // 调试开关：为 true 时，经典模式中会显示"一键完成 50 题"按钮，点击直接弹出结算弹窗。
+  // 发布前请改为 false，按钮将不显示、也无法触发。
+  classicFastFinishEnabled: false,
+};
 const FEEDBACK_TYPE_META = Object.freeze({
   anime_error: Object.freeze({
     label: '番剧错误',
@@ -53,7 +58,7 @@ const ids = [
   'startScreen', 'gameScreen', 'classicModeButton', 'freeModeButton', 'startButton', 'gameGuideButton', 'homeLeaderboardButton',
   'feedbackFab', 'feedbackModal', 'feedbackCloseButton', 'feedbackForm',
   'feedbackContent', 'feedbackMessage', 'feedbackSubmitButton', 'feedbackCancelButton',
-  'backButton', 'gameModeLabel', 'gameTitle', 'freeFilterButton', 'finishHardButton',
+  'backButton', 'gameModeLabel', 'gameTitle', 'debugFinishButton', 'freeFilterButton', 'finishHardButton',
   'progressValue', 'progressLabel', 'primaryMetric', 'primaryMetricLabel',
   'secondaryMetric', 'secondaryMetricLabel', 'timerStat', 'timerValue', 'poolStat',
   'poolCount', 'timerTrack', 'timerBar', 'loadingLayer', 'loadingText', 'animeFrame',
@@ -112,6 +117,7 @@ function bindEvents() {
     if (event.target === els.feedbackModal) closeFeedback();
   });
   els.backButton.addEventListener('click', showHome);
+  els.debugFinishButton.addEventListener('click', () => void debugFastFinishClassic());
   els.skipButton.addEventListener('click', () => state.engine?.skip());
   els.finishHardButton.addEventListener('click', finishHardGame);
   els.freeFilterButton.addEventListener('click', restartFromFreeFilter);
@@ -216,6 +222,7 @@ function showGameShell(mode) {
   els.gameTitle.textContent = meta.title;
   els.freeFilterButton.classList.toggle('hidden', mode !== 'free');
   els.finishHardButton.classList.toggle('hidden', mode !== 'hard');
+  els.debugFinishButton.classList.toggle('hidden', !(DEBUG.classicFastFinishEnabled && mode === 'classic'));
   els.timerStat.classList.toggle('hidden', mode === 'hard');
   els.timerTrack.classList.toggle('hidden', mode === 'hard');
   els.poolStat.classList.toggle('hidden', mode !== 'hard');
@@ -560,6 +567,40 @@ function finishHardGame() {
   if (state.mode === 'hard' && snapshot?.answered >= GAME_CONFIG.hard.minRankQuestions) state.engine.finish();
 }
 
+function debugFastFinishClassic() {
+  if (state.mode !== 'classic' || !DEBUG.classicFastFinishEnabled) return;
+  state.launchToken += 1;
+  stopGame();
+  const pointsPerQuestion = LOCAL_MAX_SCORE / LOCAL_COUNT;
+  const answers = Array.from({ length: LOCAL_COUNT }, (_, index) => ({
+    selectedId: String(index + 1),
+    selectedTitle: `调试番剧 ${index + 1}`,
+    answerId: String(index + 1),
+    isCorrect: true,
+    points: pointsPerQuestion,
+    remainingMs: 6000,
+    reason: 'answer',
+    question: {
+      id: String(index + 1),
+      title: `调试番剧 ${index + 1}`,
+      imageUrl: '',
+      tags: ['调试'],
+      copyrightTags: [],
+    },
+  }));
+  void completeGame({
+    mode: 'classic',
+    answered: LOCAL_COUNT,
+    correct: LOCAL_COUNT,
+    accuracy: 1,
+    score: LOCAL_MAX_SCORE,
+    elapsedMs: 180000,
+    stopped: true,
+    completedAt: new Date().toISOString(),
+    answers,
+  });
+}
+
 function createEngine({ mode, provider, questionLimit, timed }) {
   return new QuizEngine({
     mode, provider, questionLimit, timed,
@@ -688,6 +729,7 @@ function renderEngineError(error, retryAction = null) {
 function setPreparing(message) {
   els.loadingLayer.classList.remove('hidden');
   els.loadingText.textContent = message;
+  window.Decor?.refreshLoadingFlavor?.();
   els.options.replaceChildren();
   els.feedback.textContent = '';
   els.feedback.className = 'feedback';
@@ -967,6 +1009,7 @@ async function finalizeResult(result, ranked) {
   els.resultRefilterButton.classList.toggle('hidden', result.mode !== 'free');
   els.leaderboardSection.classList.toggle('hidden', !ranked);
   openModal(els.resultModal, els.resultReplayButton);
+  window.Decor?.burstConfetti?.();
   if (!ranked) return;
 
   abortLeaderboard();

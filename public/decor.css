@@ -1,0 +1,117 @@
+/*
+  页面装饰样式：飘落花瓣/星尘粒子、结算撒花、
+  模式卡悬浮动效、中二加载文案、滚动进度条与回到顶部。
+  所有效果均为纯前端装饰，不依赖任何第三方资源。
+*/
+
+/* ===== 飘落花瓣 / 星尘粒子画布（仅首页） ===== */
+.decorPetalsCanvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* 游戏中隐藏花瓣，避免干扰答题注意力 */
+body.gameActive .decorPetalsCanvas {
+  display: none;
+}
+
+/* ===== 结算撒花画布（置于所有弹窗之上） ===== */
+.decorConfettiCanvas {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ===== 首页模式卡悬浮微动效 ===== */
+.modeCard:hover .modeIcon {
+  animation: iconWiggle 0.55s ease;
+}
+.modeCard:hover .modeArrow {
+  animation: arrowNudge 0.55s ease;
+}
+.modeCard:active {
+  transform: translateY(-2px) scale(0.985);
+}
+@keyframes iconWiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-7deg); }
+  60% { transform: rotate(6deg); }
+}
+@keyframes arrowNudge {
+  0%, 100% { transform: translateX(0); }
+  40% { transform: translateX(4px); }
+}
+
+/* ===== 中二加载文案 ===== */
+.loadingFlavor {
+  margin: 0;
+  color: rgba(230, 234, 255, 0.55);
+  font-size: 13px;
+  font-weight: 620;
+  letter-spacing: 0.06em;
+}
+
+/* ===== 滚动进度条 ===== */
+.decorProgressBar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 300;
+  pointer-events: none;
+}
+.decorProgressBar span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 0 99px 99px 0;
+  background: linear-gradient(90deg, var(--accent, #4f6df5), var(--violet, #8b5cf6));
+  box-shadow: 0 0 8px rgba(79, 109, 245, 0.55);
+}
+
+/* ===== 回到顶部按钮 ===== */
+.decorTopButton {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 300;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line, #dce3ef);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--accent-dark, #314dcc);
+  font-size: 19px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(34, 48, 83, 0.16);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+}
+.decorTopButton.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.decorTopButton:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 28px rgba(34, 48, 83, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modeCard:hover .modeIcon,
+  .modeCard:hover .modeArrow {
+    animation: none;
+  }
+}

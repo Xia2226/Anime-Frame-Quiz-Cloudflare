@@ -40,6 +40,7 @@
     <link rel="icon" href="/favicon-round.png" type="image/png" />
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./dropdown.css" />
+    <link rel="stylesheet" href="./decor.css" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -54,7 +55,7 @@
       }
     </script>
   </head>
-  <body>
+  <body class="decor-petals">
     <main class="appShell">
       <section id="startScreen" class="startScreen">
         <div class="homeStack">
@@ -290,6 +291,13 @@
           </div>
           <div class="gameActions">
             <button
+              id="debugFinishButton"
+              class="secondaryButton hidden"
+              type="button"
+            >
+              一键完成50题（调试）
+            </button>
+            <button
               id="freeFilterButton"
               class="secondaryButton hidden"
               type="button"
@@ -336,6 +344,7 @@
             <div id="loadingLayer" class="loadingLayer">
               <span class="spinner"></span>
               <p id="loadingText">正在准备题目…</p>
+              <p id="loadingFlavor" class="loadingFlavor"></p>
             </div>
             <img
               id="animeFrame"
@@ -878,6 +887,7 @@
       </section>
     </div>
     <script src="./js/tracker.js" defer></script>
+    <script src="./js/decor.js" defer></script>
     <script type="module" src="./js/dropdown.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
