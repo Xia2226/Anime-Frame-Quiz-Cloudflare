@@ -3,6 +3,7 @@ node_modules/
 .wrangler/
 .wrangler-registry/
 .wrangler-xdg/
+.wrangler-home/
 .dev.vars
 
 # Legacy local runtime data
