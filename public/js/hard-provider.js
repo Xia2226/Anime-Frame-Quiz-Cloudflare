@@ -45,6 +45,9 @@ export class HardQuestionProvider {
     this.apiKey = apiKey;
     this.catalog = catalog;
     this.batchSize = batchSize;
+    // 补货水位线：池内（含加载中）降到该值及以下才批量补货到 batchSize，
+    // 避免"答一题补一题"导致 sources/resolve/DeepSeek 接口被高频调用
+    this.refillThreshold = Math.max(1, Math.floor(batchSize / 2));
     this.onBufferChange = typeof onBufferChange === "function" ? onBufferChange : null;
     this.buffer = [];
     this.pendingFrames = [];
@@ -90,8 +93,9 @@ export class HardQuestionProvider {
     }
     const question = this.buffer.shift();
     this.emitBufferChange();
-    // 每消费一题立即按缺口补货，让池中（含预加载中）始终维持 batchSize 个在途
-    if (this.bufferedCount < this.batchSize && !document.hidden) {
+    // 池内（含加载中）降到水位线及以下才批量补货到 batchSize，
+    // 一局 50 题的补货次数从约 50 次降到约 9 次，sources/resolve/DeepSeek 调用同步减少
+    if (this.bufferedCount <= this.refillThreshold && !document.hidden) {
       void this.ensureFilled().catch((error) => {
         if (!this.stopped && error.name !== "AbortError") {
           console.warn("困难题库后台补充失败：", error.message);
