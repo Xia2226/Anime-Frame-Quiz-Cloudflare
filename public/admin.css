@@ -222,10 +222,15 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   padding: 12px 14px;
   border-radius: 12px;
   background: #f5f7fb;
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.feedbackContentLine {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  line-height: 1.65;
-  font-size: 14px;
+  word-break: break-all;
 }
 .feedbackId { margin-top: 10px; color: var(--muted); font-size: 11px; text-align: right; }
 .emptyState {

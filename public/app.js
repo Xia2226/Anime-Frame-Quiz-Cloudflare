@@ -6,6 +6,8 @@ import { getLeaderboard, normalizeUsername, readLeaderboardProfile, saveLeaderbo
 
 const HARD_KEY_STORAGE = 'anime-frame-quiz.deepseek-api-key.v2';
 const GAME_GUIDE_STORAGE = 'anime-frame-quiz.game-guide-seen.v1';
+const FLAG_STORAGE_KEY = 'anime-frame-quiz.flagged-questions.v1';
+const FLAG_CONTENT_MAX_LENGTH = 1900;
 const LOCAL_COUNT = GAME_CONFIG.localQuestionCount;
 const LOCAL_MAX_SCORE = LOCAL_COUNT * Math.max(...GAME_CONFIG.scoreThresholds.map((tier) => tier.points));
 const FREE_QUESTION_OPTIONS = Object.freeze([25, 50, 75, 100]);
@@ -57,6 +59,8 @@ const state = {
   gameGuideAutoShown: false,
   freeFilter: { ...DEFAULT_FREE_FILTER, tags: [] },
   draftTags: [], freeFilterInitial: false, freeEligible: [],
+  flaggedQuestions: readFlaggedSet(),
+  flagAnchor: null, flagContextKey: null, flagSubmitting: false,
 };
 const ids = [
   'startScreen', 'gameScreen', 'classicModeButton', 'freeModeButton', 'startButton', 'gameGuideButton', 'homeLeaderboardButton',
@@ -67,6 +71,8 @@ const ids = [
   'secondaryMetric', 'secondaryMetricLabel', 'timerStat', 'timerValue', 'poolStat',
   'poolCount', 'hardHint', 'timerTrack', 'timerBar', 'loadingLayer', 'loadingText', 'animeFrame', 'framePanel',
   'statusText', 'skipButton', 'options', 'feedback', 'hardApiModal', 'hardApiCloseButton',
+  'flagQuestionButton', 'flagPopover', 'flagContext', 'flagNote', 'flagMessage',
+  'flagSubmitButton', 'flagCancelButton',
   'hardApiForm', 'deepSeekApiKeyInput', 'hardApiMessage', 'hardApiConfirmButton',
   'homeLeaderboardModal', 'homeLeaderboardCloseButton', 'homeLeaderboardClassicTab',
   'homeLeaderboardHardTab', 'homeLeaderboardDay', 'homeLeaderboardStatus', 'homeLeaderboardBody',
@@ -119,6 +125,14 @@ function bindEvents() {
   els.feedbackForm.addEventListener('submit', submitFeedback);
   els.feedbackModal.addEventListener('click', (event) => {
     if (event.target === els.feedbackModal) closeFeedback();
+  });
+  els.flagQuestionButton.addEventListener('click', onFlagButtonClick);
+  els.flagCancelButton.addEventListener('click', closeFlagPopover);
+  els.flagSubmitButton.addEventListener('click', () => void submitFlag());
+  document.addEventListener('pointerdown', (event) => {
+    if (els.flagPopover.classList.contains('hidden')) return;
+    if (event.target.closest('#flagPopover') || event.target.closest('#flagQuestionButton')) return;
+    closeFlagPopover();
   });
   els.backButton.addEventListener('click', showHome);
   els.debugFinishButton.addEventListener('click', () => void debugFastFinish());
@@ -179,7 +193,8 @@ function bindEvents() {
 
 function handleKeyboard(event) {
   if (event.key === 'Escape') {
-    if (!els.hardApiModal.classList.contains('hidden')) closeHardModal();
+    if (!els.flagPopover.classList.contains('hidden')) closeFlagPopover();
+    else if (!els.hardApiModal.classList.contains('hidden')) closeHardModal();
     else if (!els.gameGuideModal.classList.contains('hidden')) closeGameGuide();
     else if (!els.homeLeaderboardModal.classList.contains('hidden')) closeHomeLeaderboard();
     else if (!els.feedbackModal.classList.contains('hidden')) closeFeedback();
@@ -187,6 +202,8 @@ function handleKeyboard(event) {
     return;
   }
   if (document.querySelector('.modal:not(.hidden)') || !state.engine) return;
+  // 标记弹层打开时不响应游戏快捷键，避免误触答题
+  if (!els.flagPopover.classList.contains('hidden')) return;
   if (event.key === ' ' || event.key === 'Spacebar') {
     event.preventDefault();
     state.engine.skip();
@@ -251,6 +268,7 @@ function stopGame() {
   state.provider?.releaseBlobUrls?.();
   state.engine = null;
   state.provider = null;
+  hideFlagControls();
   els.animeFrame.onload = null;
   els.animeFrame.onerror = null;
   els.framePanel.querySelectorAll('video').forEach((video) => {
@@ -358,6 +376,172 @@ async function submitFeedback(event) {
     setFormMessage(els.feedbackMessage, error.message, 'error');
     els.feedbackSubmitButton.disabled = false;
   }
+}
+
+// ---- 标记题目疑似错误（复用 /api/feedback 的 anime_error 类型）----
+
+function readFlaggedSet() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(FLAG_STORAGE_KEY) || '[]');
+    if (Array.isArray(stored)) return new Set(stored.map(String).filter(Boolean));
+  } catch {
+    // sessionStorage 不可用时仅保留本页内存中的去重记录
+  }
+  return new Set();
+}
+
+function persistFlaggedSet() {
+  try {
+    sessionStorage.setItem(FLAG_STORAGE_KEY, JSON.stringify([...state.flaggedQuestions]));
+  } catch {
+    // 持久化失败不影响本次会话内的去重
+  }
+}
+
+function updateFlagButtonState() {
+  const question = state.engine?.current;
+  if (!question) {
+    hideFlagControls();
+    return;
+  }
+  const flagged = Boolean(question.id) && state.flaggedQuestions.has(String(question.id));
+  els.flagQuestionButton.classList.remove('hidden');
+  els.flagQuestionButton.classList.toggle('flagged', flagged);
+  const icon = els.flagQuestionButton.querySelector('.flagIcon');
+  if (icon) icon.textContent = flagged ? '✓' : '⚠';
+  els.flagQuestionButton.setAttribute('aria-label', flagged ? '该题已标记反馈' : '标记题目疑似错误');
+  els.flagQuestionButton.title = flagged ? '该题已标记反馈' : '标记题目疑似错误';
+  if (flagged) closeFlagPopover();
+}
+
+function hideFlagControls() {
+  els.flagQuestionButton.classList.add('hidden');
+  closeFlagPopover();
+}
+
+function onFlagButtonClick() {
+  if (els.flagQuestionButton.classList.contains('flagged')) return;
+  if (!els.flagPopover.classList.contains('hidden')) {
+    closeFlagPopover();
+    return;
+  }
+  const context = buildFlagContext();
+  if (!context) return;
+  state.flagAnchor = els.flagQuestionButton;
+  openFlagPopover(els.flagQuestionButton, context, state.engine?.current?.id);
+}
+
+function openFlagPopover(anchor, context, questionId) {
+  state.flagContextKey = questionId ? String(questionId) : null;
+  state.flagSubmitting = false;
+  els.flagContext.textContent = context || '';
+  els.flagNote.value = '';
+  setFormMessage(els.flagMessage, '');
+  els.flagSubmitButton.disabled = false;
+  els.flagPopover.classList.remove('hidden');
+  requestAnimationFrame(() => els.flagNote.focus({ preventScroll: true }));
+}
+
+function closeFlagPopover() {
+  if (els.flagPopover.classList.contains('hidden')) return;
+  els.flagPopover.classList.add('hidden');
+  state.flagAnchor = null;
+  state.flagContextKey = null;
+}
+
+function buildFlagContext() {
+  const engine = state.engine;
+  const question = engine?.current;
+  if (!question) return '';
+  const modeLabel = MODE_META[state.mode]?.title || state.mode || '未知模式';
+  // 当前题已作答（锁定）时，题号即已答数；否则为已答数 + 1
+  const number = engine.locked ? engine.answered : engine.answered + 1;
+  const options = Array.isArray(question.options)
+    ? question.options.map((option) => String(option.title || '')).filter(Boolean).join(' / ')
+    : '';
+  const imageUrl = typeof question.imageUrl === 'string' && question.imageUrl
+    ? question.imageUrl
+    : Array.isArray(question.imageCandidates)
+      ? question.imageCandidates.find((candidate) => typeof candidate === 'string' && candidate) || ''
+      : '';
+  let selected = '';
+  if (engine.locked && engine.answers.length) {
+    const last = engine.answers[engine.answers.length - 1];
+    if (last && String(last.answerId) === String(question.answerId ?? question.id)) {
+      selected = last.selectedTitle ? `｜你的答案：${last.selectedTitle}` : '';
+    }
+  }
+  return `模式：${modeLabel}｜第 ${number} 题｜答案：${question.title || '未知'}${selected}｜选项：${options || '无'}｜截图：${imageUrl}`;
+}
+
+function buildRecordFlagContext(record) {
+  const question = record?.question || {};
+  const modeLabel = MODE_META[state.resultMode]?.title || state.resultMode || '未知模式';
+  const resultLabel = record.isCorrect ? '答对'
+    : record.reason === 'timeout' ? '超时' : record.reason === 'skip' ? '跳过' : '答错';
+  const selected = record.selectedTitle ? `｜你的答案：${record.selectedTitle}` : '';
+  return `模式：${modeLabel}｜结算回顾题｜答案：${question.title || '未知'}｜结果：${resultLabel}${selected}｜截图：${question.imageUrl || ''}`;
+}
+
+function showFlagForRecord(record, anchor) {
+  const questionId = record?.question?.id;
+  if (questionId && state.flaggedQuestions.has(String(questionId))) return;
+  const context = buildRecordFlagContext(record);
+  if (!context) return;
+  state.flagAnchor = anchor;
+  openFlagPopover(anchor, context, questionId);
+}
+
+async function submitFlag() {
+  if (state.flagSubmitting || els.flagSubmitButton.disabled) return;
+  const context = sanitizeFlagText(els.flagContext.textContent);
+  if (!context) {
+    closeFlagPopover();
+    return;
+  }
+  const note = sanitizeFlagText(els.flagNote.value).slice(0, 400);
+  const rawContent = note ? `${context}｜补充说明：${note}` : context;
+  // Worker 会拒绝超过 2000 字符的 content，这里提前截断到安全长度
+  const content = Array.from(rawContent).slice(0, FLAG_CONTENT_MAX_LENGTH).join('');
+  const questionId = state.flagContextKey;
+  const anchor = state.flagAnchor;
+  state.flagSubmitting = true;
+  els.flagSubmitButton.disabled = true;
+  setFormMessage(els.flagMessage, '正在提交…', 'loading');
+  try {
+    const response = await fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ type: 'anime_error', content }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(data?.error || `提交失败（HTTP ${response.status}）`);
+    if (questionId) {
+      state.flaggedQuestions.add(questionId);
+      persistFlaggedSet();
+    }
+    closeFlagPopover();
+    if (anchor && anchor !== els.flagQuestionButton) {
+      anchor.textContent = '✓';
+      anchor.disabled = true;
+      anchor.title = '该题已标记反馈';
+      anchor.setAttribute('aria-label', '该题已标记反馈');
+    }
+    updateFlagButtonState();
+  } catch (error) {
+    setFormMessage(els.flagMessage, error.message, 'error');
+    els.flagSubmitButton.disabled = false;
+  } finally {
+    state.flagSubmitting = false;
+  }
+}
+
+// 服务端会拒绝含控制字符（含换行）的 content，提交前统一清洗为单行文本
+function sanitizeFlagText(value) {
+  return String(value || '')
+    .replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function openHomeLeaderboard() {
@@ -616,9 +800,10 @@ function debugFastFinish() {
   state.launchToken += 1;
   stopGame();
   const count = debugFastFinishCount(mode);
+  const longTitle = (index) => `调试番剧第${index + 1}话·超长标题测试用例：这是一段很长的番剧名称，用来验证结算弹窗中标题自动换行后是否会和右上角反馈按钮发生遮挡重叠问题`;
   const answers = Array.from({ length: count }, (_, index) => ({
     selectedId: String(index + 1),
-    selectedTitle: `调试番剧 ${index + 1}`,
+    selectedTitle: longTitle(index),
     answerId: String(index + 1),
     isCorrect: true,
     points: mode === 'hard' ? 0 : 10,
@@ -626,7 +811,7 @@ function debugFastFinish() {
     reason: 'answer',
     question: {
       id: String(index + 1),
-      title: `调试番剧 ${index + 1}`,
+      title: longTitle(index),
       imageUrl: '',
       tags: ['调试'],
       copyrightTags: [],
@@ -820,6 +1005,7 @@ function resetQuestionDisplay() {
 
 function updateStats(snapshot) {
   if (!snapshot || snapshot.mode !== state.mode) return;
+  updateFlagButtonState();
   const percent = Math.round(snapshot.accuracy * 100);
   if (state.mode === 'hard') {
     const questionLimit = GAME_CONFIG.hard.minRankQuestions;
@@ -1075,6 +1261,7 @@ function renderSelectedTags() {
 
 async function completeGame(result) {
   if (result.mode !== state.mode) return;
+  hideFlagControls();
   state.pendingResult = result;
   state.resultMode = result.mode;
   const ranked = result.mode === 'classic'
@@ -1266,8 +1453,18 @@ function renderResultReview(answers) {
         tagList.append(chip);
       }
     }
+    const flagButton = document.createElement('button');
+    flagButton.type = 'button';
+    flagButton.className = 'reviewFlagButton';
+    const recordId = question.id;
+    const alreadyFlagged = Boolean(recordId) && state.flaggedQuestions.has(String(recordId));
+    flagButton.textContent = alreadyFlagged ? '✓' : '!';
+    flagButton.title = alreadyFlagged ? '该题已标记反馈' : '标记题目疑似错误';
+    flagButton.setAttribute('aria-label', flagButton.title);
+    flagButton.disabled = alreadyFlagged;
+    flagButton.addEventListener('click', () => showFlagForRecord(record, flagButton));
     copy.append(title, meta, answer, tagList);
-    card.append(image, copy);
+    card.append(image, copy, flagButton);
     fragment.append(card);
   });
   els.resultReviewList.append(fragment);

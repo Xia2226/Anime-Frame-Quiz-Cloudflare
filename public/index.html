@@ -336,6 +336,15 @@
               alt="待猜测的动漫截图"
               referrerpolicy="no-referrer"
             />
+            <button
+              id="flagQuestionButton"
+              class="flagQuestionButton hidden"
+              type="button"
+              aria-label="标记题目疑似错误"
+              title="标记题目疑似错误"
+            >
+              <span class="flagIcon" aria-hidden="true">⚠</span>
+            </button>
           </div>
           <section class="questionPanel">
             <div class="questionHeader">
@@ -537,6 +546,37 @@
           </section>
         </div>
       </section>
+    </div>
+    <div id="flagPopover" class="flagPopover hidden">
+      <div class="flagPopoverHeader">
+        <strong>标记题目错误</strong>
+        <span>我们将核对截图与答案是否匹配</span>
+      </div>
+      <p id="flagContext" class="flagContext"></p>
+      <label for="flagNote">补充说明（选填）</label>
+      <textarea
+        id="flagNote"
+        rows="3"
+        maxlength="400"
+        placeholder="例如：这张图其实是《XXX》的某一集…"
+      ></textarea>
+      <p id="flagMessage" class="formMessage" role="status"></p>
+      <div class="flagPopoverActions">
+        <button
+          id="flagCancelButton"
+          class="secondaryButton"
+          type="button"
+        >
+          取消
+        </button>
+        <button
+          id="flagSubmitButton"
+          class="primaryButton"
+          type="button"
+        >
+          确认标记
+        </button>
+      </div>
     </div>
     <div
       id="feedbackModal"
@@ -881,7 +921,7 @@
               </div>
             </div>
             <p class="resultReviewTip">
-              发现题目与答案不匹配？欢迎在首页「反馈」中提交问题，我们会及时核对修正。
+              发现题目与答案不匹配？点击每张回顾卡片右上角的「!」按钮即可一键反馈，我们会及时核对修正。
             </p>
             <div id="resultReviewList" class="resultReviewList"></div>
           </section>

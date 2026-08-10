@@ -166,9 +166,25 @@
       actions.append(time, deleteBtn);
       meta.append(badge, actions);
 
-      const content = document.createElement("p");
+      // 标记类反馈的字段以「|」分隔（入库前经 NFKC 规范化，全角｜会变为半角|）
+      // 展示规则：答案/选项/截图/补充说明单独成行，其余字段（模式、结果、你的答案等）合并为第一行
+      const content = document.createElement("div");
       content.className = "feedbackContent";
-      content.textContent = item.content;
+      const parts = String(item.content || "").split(/[|｜]/).map((p) => p.trim()).filter(Boolean);
+      const firstLine = [];
+      const ownLines = [];
+      for (const part of parts) {
+        if (/^(答案|选项|截图|补充说明):/.test(part)) ownLines.push(part);
+        else firstLine.push(part);
+      }
+      const appendFeedbackLine = (text) => {
+        const line = document.createElement("div");
+        line.className = "feedbackContentLine";
+        line.textContent = text;
+        content.appendChild(line);
+      };
+      if (firstLine.length) appendFeedbackLine(firstLine.join(" "));
+      for (const part of ownLines) appendFeedbackLine(part);
 
       const id = document.createElement("p");
       id.className = "feedbackId";

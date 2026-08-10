@@ -833,6 +833,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   padding-right: 4px;
 }
 .reviewCard {
+  position: relative;
   min-width: 0;
   display: grid;
   grid-template-columns: 132px minmax(0, 1fr);
@@ -864,7 +865,14 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
   opacity: .55;
 }
 .reviewCopy { min-width: 0; display: grid; align-content: start; gap: 6px; }
-.reviewCopy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.reviewCopy strong {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  /* 为右上角反馈按钮预留空间，避免标题与其重叠 */
+  padding-right: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+}
 .reviewMeta { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
 .reviewResult { padding: 2px 6px; border-radius: 999px; font-weight: 800; }
 .reviewResult.correct { color: var(--success); background: var(--success-soft); }
@@ -998,4 +1006,130 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 109, 2
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* ---- 标记题目疑似错误 ---- */
+.flagQuestionButton {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 5;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 50%;
+  background: rgba(16, 21, 34, .55);
+  color: #e6eaff;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background .16s ease, color .16s ease, border-color .16s ease;
+}
+.flagQuestionButton:hover:not(.flagged) {
+  background: rgba(16, 21, 34, .82);
+  border-color: #c3ceff;
+}
+.flagQuestionButton.flagged {
+  color: #d1fae5;
+  border-color: rgba(114, 199, 142, .55);
+  background: rgba(22, 128, 61, .38);
+  cursor: default;
+}
+.flagIcon { font-size: 17px; line-height: 1; }
+
+.flagPopover {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 300;
+  display: grid;
+  gap: 10px;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(520px, calc(100dvh - 24px));
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, .5);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, .22);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.flagPopoverHeader { display: grid; gap: 2px; }
+.flagPopoverHeader strong { font-size: 15px; }
+.flagPopoverHeader span { color: var(--muted); font-size: 11px; }
+.flagContext {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-soft);
+  color: #526175;
+  font-size: 11px;
+  word-break: break-all;
+}
+.flagPopover label {
+  color: #344054;
+  font-size: 12px;
+  font-weight: 750;
+}
+#flagNote {
+  width: 100%;
+  min-height: 72px;
+  padding: 9px 11px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: #fff;
+  outline: 0;
+  font: inherit;
+  line-height: 1.6;
+}
+#flagNote:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 109, 245, .12);
+}
+.flagPopoverActions { display: flex; justify-content: flex-end; gap: 10px; }
+.flagPopoverActions > button { min-width: 84px; }
+
+.reviewFlagButton {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(245, 158, 11, .45);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .55);
+  color: #b45309;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .1), inset 0 1px 0 rgba(255, 255, 255, .6);
+  transition: background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+.reviewFlagButton:hover:not(:disabled) {
+  background: rgba(255, 244, 214, .85);
+  border-color: rgba(245, 158, 11, .7);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, .14), inset 0 1px 0 rgba(255, 255, 255, .6);
+}
+/* 已反馈（禁用）状态：浅绿玻璃质感 */
+.reviewFlagButton:disabled {
+  color: #1e7a4d;
+  border-color: rgba(114, 199, 142, .55);
+  background: rgba(114, 199, 142, .28);
+  cursor: default;
 }
