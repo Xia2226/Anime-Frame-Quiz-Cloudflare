@@ -154,6 +154,8 @@ npm run deploy
 | `/api/hard/video-proxy` | GET | 代理 Sakugabooru 视频并注入 CORS 头，供浏览器抽帧 |
 | `/data/anime-library.json` | GET | 合并管理员启停状态后的精简题库 |
 | `/api/admin/anime` | GET / PUT | 管理员查询番剧列表、启停番剧 |
+| `/api/announcements` | GET | 获取当前上架的站内公告（置顶在前） |
+| `/api/admin/announcements` | GET / POST / PUT / DELETE | 管理员增删改查公告、上下架与置顶 |
 | `/api/leaderboard?mode=classic\|hard` | GET | 获取指定模式的当日榜单 |
 | `/api/leaderboard?mode=classic\|hard` | POST | 提交一局满足条件的成绩并返回当日榜单 |
 
@@ -166,7 +168,8 @@ DeepSeek Key 通过 `X-DeepSeek-Api-Key` 请求头传递。Worker 对请求体�
 │   ├── 0001_daily_best.sql       # 每日最佳成绩表与排序索引
 │   ├── 0002_feedback.sql         # 问题反馈表
 │   ├── 0003_analytics.sql        # 访问统计表
-│   └── 0004_anime_override.sql   # 番剧启停覆盖表
+│   ├── 0004_anime_override.sql   # 番剧启停覆盖表
+│   └── 0005_announcements.sql    # 站内公告表
 ├── public/
 │   ├── data/anime-library.json   # 构建生成的精简题库
 │   ├── data/anime-library-old.json # 上一版题库，用于统计新增数据

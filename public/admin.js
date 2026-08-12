@@ -421,6 +421,288 @@
     }, 300);
   }
 
+  // ---------- 公告管理模块 ----------
+
+  const ANNOUNCEMENT_PAGE_SIZE = 20;
+  const annState = {
+    status: "",
+    currentPage: 1,
+    total: 0,
+    editingId: null,
+  };
+  const annEls = {
+    refreshButton: document.getElementById("annRefreshButton"),
+    formTitle: document.getElementById("annFormTitle"),
+    form: document.getElementById("annForm"),
+    title: document.getElementById("annTitle"),
+    content: document.getElementById("annContent"),
+    pinned: document.getElementById("annPinned"),
+    message: document.getElementById("annMessage"),
+    cancelEditButton: document.getElementById("annCancelEditButton"),
+    resetButton: document.getElementById("annResetButton"),
+    submitButton: document.getElementById("annSubmitButton"),
+    statusFilter: document.getElementById("annStatusFilter"),
+    totalLabel: document.getElementById("annTotalLabel"),
+    status: document.getElementById("annStatus"),
+    table: document.getElementById("annTable"),
+    prevButton: document.getElementById("annPrevButton"),
+    nextButton: document.getElementById("annNextButton"),
+    pageInfo: document.getElementById("annPageInfo"),
+    detailModal: document.getElementById("annDetailModal"),
+    detailBody: document.getElementById("annDetailBody"),
+  };
+
+  function setAnnStatus(message, kind) {
+    annEls.status.textContent = message || "";
+    annEls.status.className = kind ? `status ${kind}` : "status";
+  }
+
+  function setAnnMessage(message, kind) {
+    annEls.message.textContent = message || "";
+    // 保留基础类，仅切换错误态，避免覆盖布局样式
+    annEls.message.classList.toggle("error", kind === "error");
+  }
+
+  function setAnnSubmitBusy(busy) {
+    annEls.submitButton.disabled = busy;
+    annEls.cancelEditButton.disabled = busy;
+    annEls.resetButton.disabled = busy;
+  }
+
+  function resetAnnForm() {
+    annState.editingId = null;
+    annEls.form.reset();
+    annEls.formTitle.textContent = "发布公告";
+    annEls.submitButton.textContent = "发布";
+    annEls.cancelEditButton.classList.add("hidden");
+    setAnnMessage("");
+  }
+
+  function enterAnnouncementEdit(item) {
+    annState.editingId = item.id;
+    annEls.title.value = item.title;
+    annEls.content.value = item.content;
+    annEls.pinned.checked = item.pinned;
+    annEls.formTitle.textContent = `编辑公告 #${item.id}`;
+    annEls.submitButton.textContent = "保存修改";
+    annEls.cancelEditButton.classList.remove("hidden");
+    annEls.message.textContent = "";
+    annEls.form.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  async function submitAnnouncement(event) {
+    event.preventDefault();
+    const title = annEls.title.value.trim();
+    const content = annEls.content.value.trim();
+    if (!title || !content) {
+      setAnnMessage("标题和正文都不能为空", "error");
+      return;
+    }
+    setAnnSubmitBusy(true);
+    setAnnMessage("正在保存…");
+    try {
+      if (annState.editingId === null) {
+        await fetchJson("/api/admin/announcements", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, content, pinned: annEls.pinned.checked }),
+        });
+        setAnnMessage("已发布，状态为已下架（手动上架后前台可见）");
+      } else {
+        // 编辑保存后统一置为下架：需手动上架才在前台展示
+        await fetchJson(`/api/admin/announcements?id=${annState.editingId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title,
+            content,
+            pinned: annEls.pinned.checked,
+            active: false,
+          }),
+        });
+        setAnnMessage("已保存修改，状态已改为下架");
+      }
+      resetAnnForm();
+      await loadAnnouncements();
+    } catch (error) {
+      setAnnMessage(error.message || "保存失败", "error");
+    } finally {
+      setAnnSubmitBusy(false);
+    }
+  }
+
+  async function toggleAnnouncement(item, button) {
+    button.disabled = true;
+    setAnnStatus("正在更新…", "loading");
+    try {
+      await fetchJson(`/api/admin/announcements?id=${item.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: item.title,
+          content: item.content,
+          pinned: item.pinned,
+          active: !item.active,
+        }),
+      });
+      // 先刷新列表再展示结果，避免 loadAnnouncements 清空本消息
+      await loadAnnouncements();
+      setAnnStatus(`已${item.active ? "下架" : "上架"}「${item.title}」，前台即时生效`);
+    } catch (error) {
+      setAnnStatus(error.message || "更新失败", "error");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function deleteAnnouncement(item) {
+    if (!window.confirm(`确定删除公告「${item.title}」吗？此操作不可恢复。`)) return;
+    setAnnStatus("正在删除…", "loading");
+    try {
+      await fetchJson(`/api/admin/announcements?id=${item.id}`, { method: "DELETE" });
+      if (annState.editingId === item.id) resetAnnForm();
+      await loadAnnouncements();
+      setAnnStatus("已删除");
+    } catch (error) {
+      setAnnStatus(error.message || "删除失败", "error");
+    }
+  }
+
+  function createAnnouncementActions(item) {
+    const actions = document.createElement("td");
+    actions.className = "annActions";
+
+    const viewBtn = document.createElement("button");
+    viewBtn.type = "button";
+    viewBtn.className = "annViewBtn";
+    viewBtn.textContent = "查看详情";
+    viewBtn.addEventListener("click", () => openAnnouncementDetail(item));
+
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "annEditBtn";
+    editBtn.textContent = "编辑";
+    editBtn.addEventListener("click", () => enterAnnouncementEdit(item));
+
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "annToggleBtn";
+    toggleBtn.dataset.active = item.active ? "1" : "0";
+    toggleBtn.textContent = item.active ? "下架" : "上架";
+    toggleBtn.addEventListener("click", () => void toggleAnnouncement(item, toggleBtn));
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "deleteBtn";
+    deleteBtn.textContent = "删除";
+    deleteBtn.addEventListener("click", () => void deleteAnnouncement(item));
+
+    actions.append(viewBtn, editBtn, toggleBtn, deleteBtn);
+    return actions;
+  }
+
+  // 公告详情弹窗：卡片结构与首页「公告」弹窗中的详情视图一致
+  function openAnnouncementDetail(item) {
+    annEls.detailBody.replaceChildren();
+
+    const backButton = document.createElement("button");
+    backButton.type = "button";
+    backButton.className = "announcementDetailBack";
+    backButton.textContent = "← 返回";
+    backButton.addEventListener("click", closeAnnouncementDetail);
+
+    const card = document.createElement("article");
+    card.className = item.pinned ? "announcementCard announcementCardPinned" : "announcementCard";
+
+    const title = document.createElement("strong");
+    title.className = "announcementTitle";
+    title.append(document.createTextNode(item.title));
+    if (item.pinned) {
+      const badge = document.createElement("span");
+      badge.className = "announcementBadge";
+      badge.textContent = "置顶";
+      title.append(badge);
+    }
+
+    const content = document.createElement("p");
+    content.className = "announcementContent";
+    content.textContent = item.content;
+
+    const time = document.createElement("time");
+    time.className = "announcementTime";
+    time.dateTime = new Date(item.createdAt).toISOString();
+    time.textContent = formatTime(item.createdAt);
+
+    card.append(title, content, time);
+    annEls.detailBody.append(backButton, card);
+    annEls.detailModal.classList.remove("hidden");
+  }
+
+  function closeAnnouncementDetail() {
+    annEls.detailModal.classList.add("hidden");
+  }
+
+  function renderAnnouncements(items) {
+    const tbody = annEls.table.querySelector("tbody");
+    clearTableBody(tbody);
+    for (const item of items) {
+      const tr = document.createElement("tr");
+
+      const titleCell = document.createElement("td");
+      titleCell.className = "annTitleCell";
+      titleCell.textContent = item.title;
+      titleCell.title = item.title;
+
+      const pinnedCell = document.createElement("td");
+      pinnedCell.textContent = item.pinned ? "是" : "—";
+
+      const statusCell = document.createElement("td");
+      statusCell.textContent = item.active ? "已上架" : "已下架";
+
+      const timeCell = document.createElement("td");
+      timeCell.textContent = formatTime(item.updatedAt);
+
+      tr.append(titleCell, pinnedCell, statusCell, timeCell, createAnnouncementActions(item));
+      tbody.appendChild(tr);
+    }
+    if (items.length === 0) {
+      addEmptyRow(annEls.table, 5, "暂无公告");
+    }
+  }
+
+  function renderAnnPagination() {
+    const totalPages = Math.max(1, Math.ceil(annState.total / ANNOUNCEMENT_PAGE_SIZE));
+    annEls.prevButton.disabled = annState.currentPage <= 1;
+    annEls.nextButton.disabled = annState.currentPage >= totalPages;
+    const start = annState.total === 0 ? 0 : (annState.currentPage - 1) * ANNOUNCEMENT_PAGE_SIZE + 1;
+    const end = Math.min(annState.total, annState.currentPage * ANNOUNCEMENT_PAGE_SIZE);
+    annEls.pageInfo.textContent = `第 ${annState.currentPage} / ${totalPages} 页 · 共 ${annState.total} 条（显示 ${start}-${end}）`;
+    annEls.totalLabel.textContent = annState.total > 0 ? `共 ${annState.total} 条公告` : "暂无公告";
+  }
+
+  async function loadAnnouncements() {
+    annEls.refreshButton.disabled = true;
+    setAnnStatus("正在加载…", "loading");
+    const query = new URLSearchParams({
+      limit: String(ANNOUNCEMENT_PAGE_SIZE),
+      offset: String((annState.currentPage - 1) * ANNOUNCEMENT_PAGE_SIZE),
+    });
+    if (annState.status) query.set("status", annState.status);
+    try {
+      const data = await fetchJson(`/api/admin/announcements?${query}`);
+      annState.total = Number(data?.total) || 0;
+      renderAnnouncements(Array.isArray(data?.items) ? data.items : []);
+      renderAnnPagination();
+      setAnnStatus("");
+    } catch (error) {
+      renderAnnouncements([]);
+      renderAnnPagination();
+      setAnnStatus(error.message || "加载失败", "error");
+    } finally {
+      annEls.refreshButton.disabled = false;
+    }
+  }
+
   // ---------- 排行榜模块 ----------
 
   const leaderboardEls = {
@@ -552,6 +834,7 @@
   const moduleLoaders = {
     feedback: loadFeedback,
     anime: loadAnime,
+    announcements: loadAnnouncements,
     leaderboard: loadLeaderboard,
     analytics: loadAnalytics,
   };
@@ -619,6 +902,40 @@
     if (animeState.currentPage < Math.ceil(animeState.total / ANIME_PAGE_SIZE)) {
       animeState.currentPage += 1;
       void loadAnime();
+    }
+  });
+
+  annEls.refreshButton.addEventListener("click", () => void loadAnnouncements());
+  annEls.detailModal.addEventListener("click", (event) => {
+    // 点击遮罩空白处关闭详情弹窗
+    if (event.target === annEls.detailModal) closeAnnouncementDetail();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !annEls.detailModal.classList.contains("hidden")) {
+      closeAnnouncementDetail();
+    }
+  });
+  annEls.form.addEventListener("submit", submitAnnouncement);
+  annEls.cancelEditButton.addEventListener("click", () => {
+    resetAnnForm();
+    setAnnMessage("已取消编辑");
+  });
+  annEls.resetButton.addEventListener("click", resetAnnForm);
+  annEls.statusFilter.addEventListener("change", () => {
+    annState.status = annEls.statusFilter.value;
+    annState.currentPage = 1;
+    void loadAnnouncements();
+  });
+  annEls.prevButton.addEventListener("click", () => {
+    if (annState.currentPage > 1) {
+      annState.currentPage -= 1;
+      void loadAnnouncements();
+    }
+  });
+  annEls.nextButton.addEventListener("click", () => {
+    if (annState.currentPage < Math.ceil(annState.total / ANNOUNCEMENT_PAGE_SIZE)) {
+      annState.currentPage += 1;
+      void loadAnnouncements();
     }
   });
 

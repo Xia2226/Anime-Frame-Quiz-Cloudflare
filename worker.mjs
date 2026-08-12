@@ -17,6 +17,9 @@ const LEADERBOARD_MODES = new Set(["classic", "hard"]);
 const FEEDBACK_TYPES = new Set(["anime_error", "bug", "feature", "other"]);
 const FEEDBACK_CONTENT_MAX_LENGTH = 2000;
 const FEEDBACK_CONTACT_MAX_LENGTH = 128;
+const ANNOUNCEMENT_TITLE_MAX_LENGTH = 80;
+const ANNOUNCEMENT_CONTENT_MAX_LENGTH = 2000;
+const ANNOUNCEMENT_DISPLAY_LIMIT = 20;
 const FEEDBACK_RETENTION_DAYS = 30;
 const ANALYTICS_RETENTION_DAYS = 90;
 const ANALYTICS_PATH_MAX_LENGTH = 200;
@@ -136,6 +139,11 @@ export default {
         return await handleFeedbackPost(request, env);
       }
 
+      if (url.pathname === "/api/announcements") {
+        requireMethod(request, "GET");
+        return await handleAnnouncements(request, env);
+      }
+
       if (url.pathname === "/api/admin/leaderboard/days") {
         requireMethod(request, "GET");
         return await handleAdminLeaderboardDays(request, url, env);
@@ -167,6 +175,22 @@ export default {
           return await handleAdminAnimeToggle(request, url, env);
         }
         requireMethod(request, "GET or PUT");
+      }
+
+      if (url.pathname === "/api/admin/announcements") {
+        if (request.method === "GET") {
+          return await handleAdminAnnouncementsList(request, url, env);
+        }
+        if (request.method === "POST") {
+          return await handleAdminAnnouncementsCreate(request, url, env);
+        }
+        if (request.method === "PUT") {
+          return await handleAdminAnnouncementsUpdate(request, url, env);
+        }
+        if (request.method === "DELETE") {
+          return await handleAdminAnnouncementsDelete(request, url, env);
+        }
+        requireMethod(request, "GET, POST, PUT or DELETE");
       }
 
       // 图库资源文件由 Worker 合并管理员启停状态后返回，前台无需改动
@@ -720,6 +744,132 @@ async function handleAdminAnimeToggle(request, url, env) {
       updated_at = excluded.updated_at
   `).bind(anidbId, enabled ? 1 : 0, Date.now()).run();
   return json({ ok: true, anidbId, enabled });
+}
+
+async function handleAnnouncements(request, env) {
+  requireLeaderboardDatabase(env);
+  const result = await env.DB.prepare(
+    "SELECT id, title, content, pinned, created_at FROM announcements"
+    + " WHERE active = 1 ORDER BY pinned DESC, created_at DESC LIMIT ?",
+  ).bind(ANNOUNCEMENT_DISPLAY_LIMIT).all();
+  const items = (result.results || []).map((row) => ({
+    id: row.id,
+    title: row.title,
+    content: row.content,
+    pinned: row.pinned === 1,
+    createdAt: row.created_at,
+  }));
+  // 不做缓存：公告数据量小且变更需即时可见，json() 默认 no-store 即可
+  return json({ items });
+}
+
+async function handleAdminAnnouncementsList(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const status = String(url.searchParams.get("status") || "").trim();
+  if (!["", "active", "inactive"].includes(status)) {
+    throw httpError(400, "status 必须是 active 或 inactive");
+  }
+  const limit = parseAdminFeedbackLimit(url.searchParams.get("limit"));
+  const offset = parseAdminFeedbackOffset(url.searchParams.get("offset"));
+  const conditions = status ? "WHERE active = ?" : "";
+  const bindArgs = status ? [status === "active" ? 1 : 0] : [];
+  const countResult = await env.DB.prepare(
+    `SELECT COUNT(*) AS total FROM announcements ${conditions}`,
+  ).bind(...bindArgs).first();
+  const listResult = await env.DB.prepare(
+    `SELECT id, title, content, pinned, active, created_at, updated_at FROM announcements ${conditions}
+     ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+  ).bind(...bindArgs, limit, offset).all();
+  const items = (listResult.results || []).map((row) => ({
+    id: row.id,
+    title: row.title,
+    content: row.content,
+    pinned: row.pinned === 1,
+    active: row.active === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+  return json({ total: countResult?.total ?? 0, limit, offset, items });
+}
+
+async function handleAdminAnnouncementsCreate(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const body = await readJsonBody(request, 16 * 1024);
+  const announcement = normalizeAnnouncementSubmission(body);
+  const now = Date.now();
+  // 新公告默认「已下架」：需管理员手动上架后才会在前台展示
+  const result = await env.DB.prepare(
+    "INSERT INTO announcements (title, content, pinned, active, created_at, updated_at)"
+    + " VALUES (?, ?, ?, 0, ?, ?)",
+  ).bind(
+    announcement.title,
+    announcement.content,
+    announcement.pinned ? 1 : 0,
+    now,
+    now,
+  ).run();
+  return json({ ok: true, id: result.meta?.last_row_id });
+}
+
+async function handleAdminAnnouncementsUpdate(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const id = parseAdminFeedbackId(url.searchParams.get("id"));
+  const body = await readJsonBody(request, 16 * 1024);
+  // 更新接口必须显式指定 active，避免缺省置为上架而回滚管理员的上下架操作
+  if (!body || typeof body.active !== "boolean") {
+    throw httpError(400, "active 必须是布尔值");
+  }
+  const announcement = normalizeAnnouncementSubmission(body);
+  const result = await env.DB.prepare(
+    "UPDATE announcements SET title = ?, content = ?, pinned = ?, active = ?, updated_at = ? WHERE id = ?",
+  ).bind(
+    announcement.title,
+    announcement.content,
+    announcement.pinned ? 1 : 0,
+    announcement.active ? 1 : 0,
+    Date.now(),
+    id,
+  ).run();
+  if (!(result.meta?.changes > 0)) throw httpError(404, "公告不存在");
+  return json({ ok: true, id });
+}
+
+async function handleAdminAnnouncementsDelete(request, url, env) {
+  requireLeaderboardDatabase(env);
+  const id = parseAdminFeedbackId(url.searchParams.get("id"));
+  const result = await env.DB.prepare("DELETE FROM announcements WHERE id = ?").bind(id).run();
+  if (!(result.meta?.changes > 0)) throw httpError(404, "公告不存在");
+  return json({ ok: true });
+}
+
+function normalizeAnnouncementSubmission(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw httpError(400, "请求体必须是对象");
+  }
+  const title = normalizeFeedbackText(body.title, "title", ANNOUNCEMENT_TITLE_MAX_LENGTH, true);
+  const content = normalizeAnnouncementContent(body.content, "content", ANNOUNCEMENT_CONTENT_MAX_LENGTH);
+  // 更新接口通过 active 控制上下架；创建接口忽略 active，一律默认下架
+  const pinned = body.pinned === true;
+  const active = body.active === true;
+  return { title, content, pinned, active };
+}
+
+// 公告正文允许换行：统一换行符、静默移除零宽空格等不可见格式符，
+// 其余控制字符（含孤立代理项）仍然拒绝
+function normalizeAnnouncementContent(value, fieldName, maximumLength) {
+  if (value === null || value === undefined) value = "";
+  if (typeof value !== "string") throw httpError(400, `${fieldName} 必须是字符串`);
+  let text = value.normalize("NFKC").replace(/\r\n?/g, "\n");
+  // 粘贴自网页/文档常带入零宽空格（U+200B）、方向标记等格式符，直接移除
+  text = text.replace(/[\p{Cf}]/gu, "").trim();
+  if (!text) throw httpError(400, `${fieldName} 不能为空`);
+  if (Array.from(text).length > maximumLength) {
+    throw httpError(400, `${fieldName} 长度不能超过 ${maximumLength} 个字符`);
+  }
+  if (/(?![\t\n\r])[\p{Cc}\p{Cs}]/u.test(text)) {
+    throw httpError(400, `${fieldName} 包含不允许的控制字符`);
+  }
+  return text;
 }
 
 async function loadMergedAnimeLibrary(request, env) {

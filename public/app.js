@@ -7,6 +7,7 @@ import { getLeaderboard, normalizeUsername, readLeaderboardProfile, saveLeaderbo
 const HARD_KEY_STORAGE = 'anime-frame-quiz.deepseek-api-key.v2';
 const GAME_GUIDE_STORAGE = 'anime-frame-quiz.game-guide-seen.v1';
 const FLAG_STORAGE_KEY = 'anime-frame-quiz.flagged-questions.v1';
+const ANNOUNCEMENTS_CLOSED_KEY = 'anime-frame-quiz.closed-announcements.v1';
 const FLAG_CONTENT_MAX_LENGTH = 1900;
 const LOCAL_COUNT = GAME_CONFIG.localQuestionCount;
 const LOCAL_MAX_SCORE = LOCAL_COUNT * Math.max(...GAME_CONFIG.scoreThresholds.map((tier) => tier.points));
@@ -50,6 +51,11 @@ const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   timeZone: GAME_CONFIG.leaderboard.timeZone,
   month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
 });
+// 公告时间：在默认格式基础上补充年份（仅后两位，如「26/08/12 14:30」）
+const announcementTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: GAME_CONFIG.leaderboard.timeZone,
+  year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+});
 const state = {
   catalog: null, engine: null, provider: null, mode: null,
   launchToken: 0, imageToken: 0, hardValidationToken: 0,
@@ -63,7 +69,9 @@ const state = {
   flagAnchor: null, flagContextKey: null, flagSubmitting: false,
 };
 const ids = [
-  'startScreen', 'gameScreen', 'classicModeButton', 'freeModeButton', 'startButton', 'gameGuideButton', 'homeLeaderboardButton',
+  'startScreen', 'gameScreen', 'announcementsBar', 'announcementsButton',
+  'announcementsModal', 'announcementsCloseButton', 'announcementsList', 'announcementsDetail',
+  'classicModeButton', 'freeModeButton', 'startButton', 'gameGuideButton', 'homeLeaderboardButton',
   'feedbackFab', 'feedbackModal', 'feedbackCloseButton', 'feedbackForm',
   'feedbackContent', 'feedbackMessage', 'feedbackSubmitButton', 'feedbackCancelButton',
   'backButton', 'gameModeLabel', 'gameTitle', 'debugFinishButton', 'freeFilterButton',
@@ -95,6 +103,7 @@ if (missingIds.length) throw new Error(`页面缺少必要元素：${missingIds.
 bindEvents();
 renderConfiguredCopy();
 showHome();
+void loadAnnouncements();
 maybeOpenGameGuide();
 
 function renderConfiguredCopy() {
@@ -112,12 +121,205 @@ function renderConfiguredCopy() {
   els.resultCorrectValue.textContent = `0 / ${LOCAL_COUNT}`;
 }
 
+// ---------- 站内公告 ----------
+
+let announcementItems = [];
+
+async function loadAnnouncements() {
+  try {
+    const response = await fetch('/api/announcements', {
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    announcementItems = Array.isArray(data?.items) ? data.items : [];
+    renderAnnouncements(announcementItems);
+    // 公告弹窗打开且停留在列表视图时同步刷新，保证内容最新
+    const listVisible = !els.announcementsModal.classList.contains('hidden')
+      && els.announcementsDetail.classList.contains('hidden');
+    if (listVisible) renderAnnouncementsList();
+  } catch {
+    // 公告加载失败不影响主流程，保持横幅隐藏
+  }
+}
+
+// 首页公告：以独立悬浮图层展示置顶公告，其余公告通过「公告」按钮查看
+// 用户叉掉的公告记录在 sessionStorage：只要不关闭网站，刷新页面后不再展示
+function readClosedAnnouncements() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(ANNOUNCEMENTS_CLOSED_KEY) || '[]');
+    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeClosedAnnouncements(ids) {
+  try {
+    sessionStorage.setItem(ANNOUNCEMENTS_CLOSED_KEY, JSON.stringify([...ids]));
+  } catch {
+    // 存储失败不影响本次关闭操作
+  }
+}
+
+function renderAnnouncements(items) {
+  const closedIds = readClosedAnnouncements();
+  const pinnedItems = items
+    .filter((item) => item.pinned)
+    .filter((item) => !closedIds.has(String(item.id)));
+  // 与全站约定一致：用 .hidden 类控制显隐（元素初始带该类的 HTML 标记）
+  els.announcementsBar.classList.toggle('hidden', pinnedItems.length === 0);
+  if (!pinnedItems.length) return;
+  els.announcementsBar.replaceChildren();
+  for (const item of pinnedItems) {
+    const card = document.createElement('article');
+    card.className = 'announcementCard announcementCardPinned';
+
+    const title = document.createElement('strong');
+    title.className = 'announcementTitle';
+    title.append(document.createTextNode(item.title));
+    title.title = item.title;
+    const badge = document.createElement('span');
+    badge.className = 'announcementBadge';
+    badge.textContent = '置顶';
+    title.append(badge);
+
+    const content = document.createElement('p');
+    content.className = 'announcementContent';
+    content.textContent = item.content;
+
+    const time = document.createElement('time');
+    time.className = 'announcementTime';
+    time.dateTime = new Date(item.createdAt).toISOString();
+    time.textContent = announcementTimeFormatter.format(new Date(item.createdAt));
+
+    // 首页悬浮卡片右上角关闭按钮：点击后仅关闭该条公告的首页展示
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'announcementCloseButton';
+    closeButton.setAttribute('aria-label', `关闭公告「${item.title}」`);
+    closeButton.textContent = '×';
+    closeButton.addEventListener('click', () => {
+      const ids = readClosedAnnouncements();
+      ids.add(String(item.id));
+      writeClosedAnnouncements(ids);
+      card.remove();
+      if (!els.announcementsBar.children.length) els.announcementsBar.classList.add('hidden');
+    });
+
+    card.append(title, content, time, closeButton);
+    els.announcementsBar.append(card);
+  }
+}
+
+function openAnnouncements() {
+  renderAnnouncementsList();
+  openModal(els.announcementsModal, els.announcementsCloseButton);
+  // 打开时拉取一次最新公告
+  void loadAnnouncements();
+}
+
+function closeAnnouncements() {
+  closeModal(els.announcementsModal);
+  if (!els.startScreen.classList.contains('hidden')) els.announcementsButton.focus();
+}
+
+function renderAnnouncementsList() {
+  els.announcementsDetail.classList.add('hidden');
+  els.announcementsList.classList.remove('hidden');
+  els.announcementsList.replaceChildren();
+  if (!announcementItems.length) {
+    const empty = document.createElement('p');
+    empty.className = 'announcementEmpty';
+    empty.textContent = '暂无公告';
+    els.announcementsList.append(empty);
+    return;
+  }
+  for (const item of announcementItems) {
+    // 列表项与首页横幅卡片同款：置顶角标 + 标题 + 时间，仅不展示正文
+    const card = document.createElement('article');
+    card.className = item.pinned ? 'announcementListItem announcementListItemPinned' : 'announcementListItem';
+    card.setAttribute('role', 'listitem');
+
+    const main = document.createElement('div');
+    main.className = 'announcementListItemMain';
+
+    const title = document.createElement('strong');
+    title.className = 'announcementListItemTitle';
+    title.append(document.createTextNode(item.title));
+    if (item.pinned) {
+      const badge = document.createElement('span');
+      badge.className = 'announcementBadge';
+      badge.textContent = '置顶';
+      title.append(badge);
+    }
+
+    const time = document.createElement('time');
+    time.className = 'announcementListItemTime';
+    time.dateTime = new Date(item.createdAt).toISOString();
+    time.textContent = announcementTimeFormatter.format(new Date(item.createdAt));
+
+    const viewButton = document.createElement('button');
+    viewButton.type = 'button';
+    viewButton.className = 'announcementViewButton';
+    viewButton.textContent = '查看详情';
+    viewButton.addEventListener('click', () => showAnnouncementDetail(item));
+
+    main.append(title, time);
+    card.append(main, viewButton);
+    els.announcementsList.append(card);
+  }
+}
+
+function showAnnouncementDetail(item) {
+  els.announcementsList.classList.add('hidden');
+  els.announcementsDetail.classList.remove('hidden');
+  els.announcementsDetail.replaceChildren();
+
+  const backButton = document.createElement('button');
+  backButton.type = 'button';
+  backButton.className = 'announcementDetailBack';
+  backButton.textContent = '← 返回列表';
+  backButton.addEventListener('click', renderAnnouncementsList);
+
+  // 与首页横幅卡片同款结构：置顶角标 + 标题 + 正文 + 时间，背景一致
+  const card = document.createElement('article');
+  card.className = item.pinned ? 'announcementCard announcementCardPinned' : 'announcementCard';
+
+  const title = document.createElement('strong');
+  title.className = 'announcementTitle';
+  title.append(document.createTextNode(item.title));
+  if (item.pinned) {
+    const badge = document.createElement('span');
+    badge.className = 'announcementBadge';
+    badge.textContent = '置顶';
+    title.append(badge);
+  }
+
+  const content = document.createElement('p');
+  content.className = 'announcementContent';
+  content.textContent = item.content;
+
+  const time = document.createElement('time');
+  time.className = 'announcementTime';
+  time.dateTime = new Date(item.createdAt).toISOString();
+  time.textContent = announcementTimeFormatter.format(new Date(item.createdAt));
+
+  card.append(title, content, time);
+  els.announcementsDetail.append(backButton, card);
+}
+
 function bindEvents() {
   els.classicModeButton.addEventListener('click', () => void beginClassic());
   els.freeModeButton.addEventListener('click', () => void beginFreeEntry());
   els.startButton.addEventListener('click', openHardModal);
   els.homeLeaderboardButton.addEventListener('click', openHomeLeaderboard);
   els.gameGuideButton.addEventListener('click', openGameGuide);
+  els.announcementsButton.addEventListener('click', openAnnouncements);
+  els.announcementsCloseButton.addEventListener('click', closeAnnouncements);
+  els.announcementsModal.addEventListener('click', (event) => {
+    if (event.target === els.announcementsModal) closeAnnouncements();
+  });
   els.feedbackFab.addEventListener('click', openFeedback);
   els.feedbackCloseButton.addEventListener('click', closeFeedback);
   els.feedbackCancelButton.addEventListener('click', closeFeedback);
@@ -197,6 +399,7 @@ function handleKeyboard(event) {
     else if (!els.hardApiModal.classList.contains('hidden')) closeHardModal();
     else if (!els.gameGuideModal.classList.contains('hidden')) closeGameGuide();
     else if (!els.homeLeaderboardModal.classList.contains('hidden')) closeHomeLeaderboard();
+    else if (!els.announcementsModal.classList.contains('hidden')) closeAnnouncements();
     else if (!els.feedbackModal.classList.contains('hidden')) closeFeedback();
     else if (!els.freeFilterModal.classList.contains('hidden')) closeFreeFilter();
     return;

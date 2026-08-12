@@ -22,6 +22,7 @@
       <nav class="adminNav" aria-label="后台模块">
         <button type="button" class="navItem active" data-module="feedback">问题反馈</button>
         <button type="button" class="navItem" data-module="anime">动漫管理</button>
+        <button type="button" class="navItem" data-module="announcements">公告管理</button>
         <button type="button" class="navItem" data-module="leaderboard">排行榜</button>
         <button type="button" class="navItem" data-module="analytics">访问统计</button>
       </nav>
@@ -51,6 +52,69 @@
             <button id="prevButton" class="btn" type="button">上一页</button>
             <span id="pageInfo" class="pageInfo"></span>
             <button id="nextButton" class="btn" type="button">下一页</button>
+          </footer>
+        </section>
+
+        <section id="module-announcements" class="modulePanel hidden">
+          <div class="moduleHead">
+            <h2>公告管理</h2>
+            <button id="annRefreshButton" class="btn primary" type="button">刷新</button>
+          </div>
+          <div class="anaBlock">
+            <p class="blockTitle" id="annFormTitle">发布公告</p>
+            <form id="annForm" class="annForm">
+              <label class="annField" for="annTitle">
+                标题
+                <input id="annTitle" type="text" maxlength="80" required autocomplete="off" placeholder="公告标题（1–80 字）" />
+              </label>
+              <label class="annField" for="annContent">
+                正文
+                <textarea id="annContent" rows="4" maxlength="2000" required placeholder="公告正文（1–2000 字，可换行）"></textarea>
+              </label>
+              <div class="annFormRow">
+                <label class="annCheck">
+                  <input id="annPinned" type="checkbox" />
+                  <span>置顶展示</span>
+                </label>
+                <p id="annMessage" class="annMessage" role="status"></p>
+              </div>
+              <div class="annFormActions">
+                <button id="annCancelEditButton" class="btn hidden" type="button">取消编辑</button>
+                <button id="annResetButton" class="btn" type="button">清空</button>
+                <button id="annSubmitButton" class="btn primary" type="submit">发布</button>
+              </div>
+            </form>
+          </div>
+          <div class="toolbar">
+            <label class="filterLabel" for="annStatusFilter">
+              状态
+              <select id="annStatusFilter" data-afq-select>
+                <option value="">全部</option>
+                <option value="active">已上架</option>
+                <option value="inactive">已下架</option>
+              </select>
+            </label>
+            <p id="annTotalLabel" class="totalLabel" role="status"></p>
+          </div>
+          <p id="annStatus" class="status" role="status"></p>
+          <div class="tableWrap">
+            <table class="dataTable" id="annTable">
+              <thead>
+                <tr>
+                  <th>标题</th>
+                  <th>置顶</th>
+                  <th>状态</th>
+                  <th>更新时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <footer class="pagination">
+            <button id="annPrevButton" class="btn" type="button">上一页</button>
+            <span id="annPageInfo" class="pageInfo"></span>
+            <button id="annNextButton" class="btn" type="button">下一页</button>
           </footer>
         </section>
 
@@ -194,6 +258,11 @@
           </div>
         </section>
       </main>
+    </div>
+    <div id="annDetailModal" class="annDetailModal hidden">
+      <div class="annDetailDialog" role="dialog" aria-modal="true" aria-label="公告详情">
+        <div id="annDetailBody" class="announcementDetail"></div>
+      </div>
     </div>
     <script src="./admin.js"></script>
     <script type="module" src="./js/dropdown.js"></script>

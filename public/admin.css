@@ -33,6 +33,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   outline: 3px solid rgba(79, 109, 245, .25);
   outline-offset: 2px;
 }
+.hidden { display: none !important; }
 .adminShell {
   width: min(960px, calc(100% - 32px));
   margin: 0 auto;
@@ -294,6 +295,206 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   background: rgba(255, 255, 255, .9);
   box-shadow: 0 6px 20px rgba(34, 48, 83, .05);
 }
+/* 公告管理：表单与表格区域使用卡片背景，与其他模块视觉一致 */
+#module-announcements .tableWrap {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 6px 20px rgba(34, 48, 83, .05);
+}
+#module-announcements .anaBlock { display: grid; gap: 14px; }
+#annTable th:nth-child(1) { width: 28%; }
+#annTable th:nth-child(2) { width: 8%; }
+#annTable th:nth-child(3) { width: 10%; }
+#annTable th:nth-child(4) { width: 16%; }
+#annTable th:nth-child(5) { width: 38%; }
+#annTable td.annTitleCell { text-align: left; }
+.annForm { display: grid; gap: 12px; }
+.annField {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.annField input,
+.annField textarea {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 400;
+  font-family: inherit;
+  resize: vertical;
+}
+.annField textarea { min-height: 90px; }
+.annFormRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.annCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.annCheck input { accent-color: var(--accent); }
+.annFormActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.annMessage { margin: 0; font-size: 13px; color: var(--success); }
+.annMessage.error { color: var(--danger); }
+.annActions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.annEditBtn,
+.annToggleBtn,
+.annViewBtn {
+  min-height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .16s ease, border-color .16s ease, color .16s ease;
+}
+/* 查看详情：信息蓝 */
+.annViewBtn {
+  border-color: #c9d6ff;
+  background: #eef2ff;
+  color: var(--accent-dark);
+}
+.annViewBtn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+/* 编辑：琥珀橙 */
+.annEditBtn {
+  border-color: #f0d9ae;
+  background: #fff8ec;
+  color: #9a6b1f;
+}
+.annEditBtn:hover {
+  background: #e8a33d;
+  border-color: #e8a33d;
+  color: #fff;
+}
+.annToggleBtn:hover {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+}
+.annToggleBtn[data-active="1"] {
+  border-color: #f3c2c2;
+  background: #fff5f5;
+  color: var(--danger);
+}
+.annToggleBtn[data-active="0"] {
+  border-color: #cfe6d6;
+  background: #eaf8ef;
+  color: var(--success);
+}
+.annEditBtn:disabled,
+.annToggleBtn:disabled,
+.annViewBtn:disabled,
+.annForm .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 公告详情弹窗：卡片样式与首页「公告」弹窗详情视图保持一致 */
+.annDetailModal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(16, 21, 34, .45);
+  backdrop-filter: blur(3px);
+}
+.annDetailDialog {
+  width: min(100%, 560px);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 20px 22px;
+  border: 1px solid rgba(220, 227, 239, .9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 24px 60px rgba(34, 48, 83, .25);
+}
+.announcementDetail {
+  display: grid;
+  gap: 12px;
+}
+.announcementDetailBack {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.announcementCard {
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 10px 30px rgba(34, 48, 83, .07);
+  backdrop-filter: blur(14px);
+}
+.announcementCardPinned {
+  border-color: #cfd8ff;
+  background: rgba(237, 241, 255, .92);
+}
+.announcementTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.announcementBadge {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+.announcementContent {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.announcementTime {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  opacity: .75;
+}
 .dataTable {
   width: 100%;
   table-layout: fixed;
@@ -418,4 +619,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   #animeTable td:nth-child(2),
   #animeTable th:nth-child(3),
   #animeTable td:nth-child(3) { display: none; }
+  /* 公告管理：隐藏置顶列，减少横向滚动 */
+  #annTable th:nth-child(2),
+  #annTable td:nth-child(2) { display: none; }
 }

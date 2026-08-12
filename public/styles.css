@@ -64,6 +64,177 @@ a { color: var(--accent-dark); text-decoration-thickness: 1px; text-underline-of
   padding: 7vh 0 28px;
 }
 .homeStack { width: 100%; display: grid; justify-items: center; gap: 18px; }
+.announcementsBar {
+  /* 首页公告独立悬浮图层：脱离文档流，位置可任意调整，不影响下方页面结构 */
+  position: fixed;
+  z-index: 40;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 32px));
+  display: grid;
+  gap: 10px;
+}
+.announcementCard {
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 10px 30px rgba(34, 48, 83, .07);
+  backdrop-filter: blur(14px);
+}
+.announcementCardPinned {
+  border-color: #cfd8ff;
+  background: rgba(237, 241, 255, .92);
+}
+.announcementsBar .announcementCard {
+  position: relative;
+}
+.announcementsBar .announcementTitle {
+  /* 为右上角关闭按钮预留空间，避免标题文字被遮挡 */
+  padding-right: 26px;
+}
+.announcementCloseButton {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .16s ease, color .16s ease;
+}
+.announcementCloseButton:hover {
+  background: rgba(34, 48, 83, .08);
+  color: var(--ink);
+}
+.announcementTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.announcementBadge {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+.announcementContent {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.announcementTime {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  opacity: .75;
+}
+.announcementsButton svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.announcementsDialog {
+  width: min(100%, 620px);
+  padding: 28px;
+}
+.announcementList {
+  display: grid;
+  gap: 10px;
+}
+.announcementListItem {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 10px 30px rgba(34, 48, 83, .07);
+  backdrop-filter: blur(14px);
+}
+.announcementListItemPinned {
+  border-color: #cfd8ff;
+  background: rgba(237, 241, 255, .92);
+}
+.announcementListItemMain {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.announcementListItemTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.announcementListItemTime {
+  color: var(--muted);
+  font-size: 11px;
+  opacity: .75;
+}
+.announcementViewButton {
+  flex: none;
+  min-height: 30px;
+  padding: 0 13px;
+  border: 1px solid #cfd8ff;
+  border-radius: 999px;
+  background: rgba(237, 241, 255, .92);
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+.announcementViewButton:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 12px rgba(34, 48, 83, .09);
+}
+.announcementEmpty {
+  margin: 0;
+  padding: 22px 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.announcementDetail {
+  display: grid;
+  gap: 12px;
+}
+.announcementDetailBack {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
 .heroCard {
   position: relative;
   width: min(100%, 980px);
@@ -84,6 +255,9 @@ a { color: var(--accent-dark); text-decoration-thickness: 1px; text-underline-of
   gap: 7px;
 }
 .homeUtilityButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-height: 34px;
   padding: 0 12px;
   border: 1px solid var(--line);
