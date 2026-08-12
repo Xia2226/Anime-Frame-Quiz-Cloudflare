@@ -1,7 +1,11 @@
 "use strict";
 
 const DATA_URL = "./data/anime-library.json";
+// 旧版数据只在首次访问时下载一次作为新增统计基准，之后用 Cache API 保存上一版数据
 const PREVIOUS_DATA_URL = "./data/anime-library-old.json";
+const CACHE_NAME = "anime-library-cache-v1";
+const CACHE_CURRENT_URL = new URL("./data/anime-library.json", location.href).href;
+const CACHE_PREVIOUS_URL = new URL("./data/anime-library.previous.json", location.href).href;
 const SEARCH_DELAY_MS = 120;
 const MAX_TOP_TAGS = 18;
 const MAX_ROW_TAGS = 4;
@@ -31,6 +35,7 @@ const state = {
   chartFrameId: null,
   chartPositioned: false,
   chartHitAreas: [],
+  dataVersion: "",
 };
 
 const els = {
@@ -123,7 +128,25 @@ async function loadLibrary() {
   state.requestController?.abort();
   const controller = new AbortController();
   state.requestController = controller;
-  showLoadingState();
+
+  // 先读 Cache API：命中则立即用缓存渲染，避免每次打开都等待网络
+  const cached = await readCachedLibrary();
+  if (cached.currentJson) {
+    try {
+      renderLibrary(cached.currentJson, cached.previousJson);
+      els.pageStatus.hidden = true;
+      els.libraryContent.hidden = false;
+      requestAnimationFrame(scheduleChartDraw);
+    } catch (error) {
+      // 缓存数据异常（如损坏）时回退到网络加载，避免页面卡死且无兜底
+      console.warn("缓存数据渲染失败，回退到网络加载：", error);
+      cached.currentJson = null;
+      cached.currentResponse = null;
+      showLoadingState();
+    }
+  } else {
+    showLoadingState();
+  }
 
   try {
     const requestOptions = {
@@ -131,56 +154,119 @@ async function loadLibrary() {
       cache: "default",
       headers: { Accept: "application/json" },
     };
-    const [currentResponse, previousResponse] = await Promise.all([
+
+    // 首次访问（无缓存基准）时并行下载旧版数据作为新增统计基准，之后不再重复下载
+    const firstVisit = !cached.currentJson;
+    const oldFetch = firstVisit
+      ? fetch(PREVIOUS_DATA_URL, requestOptions).catch(() => null)
+      : Promise.resolve(null);
+
+    const [response, oldResponse] = await Promise.all([
       fetch(DATA_URL, requestOptions),
-      fetch(PREVIOUS_DATA_URL, requestOptions).catch(() => null),
+      oldFetch,
     ]);
     if (controller.signal.aborted) return;
-    if (!currentResponse.ok) {
-      throw new Error(`HTTP ${currentResponse.status}`);
-    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const [currentRaw, previousRaw] = await Promise.all([
-      currentResponse.json(),
-      previousResponse?.ok ? previousResponse.json() : Promise.resolve(null),
+    const [currentRaw, oldRaw] = await Promise.all([
+      response.clone().json(),
+      oldResponse?.ok ? oldResponse.clone().json().catch(() => null) : Promise.resolve(null),
     ]);
     if (controller.signal.aborted) return;
 
-    const library = normalizeLibrary(currentRaw);
-    const previous = previousRaw ? normalizePreviousLibrary(previousRaw) : null;
+    // 写入缓存的上一版基准：首次访问用旧版数据，其余情况沿用上次访问缓存的版本
+    let previousResponse = cached.currentResponse;
+    if (firstVisit && oldRaw) previousResponse = oldResponse;
 
-    state.anime = library.anime;
-    state.overview = calculateOverview(library.anime);
-    state.delta = previous ? calculateDelta(library, previous) : null;
-    state.yearStats = state.overview.yearStats;
-    state.tags = state.overview.topTags.map(([name, animeCount]) => ({
-      name,
-      animeCount,
-      searchName: normalizeSearchText(name),
-    }));
-    state.selectedTags = [];
-    state.chartPositioned = false;
-    state.page = 1;
+    // 后台刷新始终重新渲染以保持数据最新（含管理员启停变更），但保留用户筛选与页码；
+    // 版本未变化时沿用缓存渲染的基准，避免新增角标在刷新后消失
+    const version = normalizeVersion(currentRaw.version);
+    const displayPreviousRaw = version !== state.dataVersion
+      ? (cached.currentJson || oldRaw)
+      : (cached.previousJson || oldRaw);
 
-    renderDatasetVersion(library.version);
-    renderOverview();
-    populateYearOptions();
-    renderTopTags();
-    renderSelectedCatalogTags();
-    renderTagSearchResults();
-    applyCatalogFilters();
+    renderLibrary(currentRaw, displayPreviousRaw, !firstVisit);
+
+    await writeCachedLibrary(response, previousResponse);
 
     els.pageStatus.hidden = true;
     els.libraryContent.hidden = false;
     requestAnimationFrame(scheduleChartDraw);
   } catch (error) {
     if (error.name === "AbortError") return;
-    console.error("图库资源加载失败：", error);
-    showErrorState(error);
+    if (cached.currentJson) {
+      // 已有缓存内容时降级为后台刷新失败，不打断浏览
+      console.warn("图库资源后台刷新失败，继续使用缓存数据：", error);
+    } else {
+      console.error("图库资源加载失败：", error);
+      showErrorState(error);
+    }
   } finally {
     if (state.requestController === controller) {
       state.requestController = null;
     }
+  }
+}
+
+function renderLibrary(currentRaw, previousRaw, preserveView = false) {
+  const library = normalizeLibrary(currentRaw);
+  const previous = previousRaw ? normalizePreviousLibrary(previousRaw) : null;
+
+  state.anime = library.anime;
+  state.overview = calculateOverview(library.anime);
+  state.delta = previous ? calculateDelta(library, previous) : null;
+  state.yearStats = state.overview.yearStats;
+  state.tags = state.overview.topTags.map(([name, animeCount]) => ({
+    name,
+    animeCount,
+    searchName: normalizeSearchText(name),
+  }));
+  if (!preserveView) {
+    state.selectedTags = [];
+    state.chartPositioned = false;
+    state.page = 1;
+  }
+  state.dataVersion = library.version;
+
+  renderDatasetVersion(library.version);
+  renderOverview();
+  populateYearOptions();
+  renderTopTags();
+  renderSelectedCatalogTags();
+  renderTagSearchResults();
+  applyCatalogFilters(preserveView);
+}
+
+async function readCachedLibrary() {
+  if (typeof caches === "undefined") {
+    return { currentResponse: null, currentJson: null, previousJson: null };
+  }
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const [currentResponse, previousResponse] = await Promise.all([
+      cache.match(CACHE_CURRENT_URL),
+      cache.match(CACHE_PREVIOUS_URL),
+    ]);
+    return {
+      currentResponse,
+      currentJson: currentResponse ? await currentResponse.clone().json() : null,
+      previousJson: previousResponse ? await previousResponse.clone().json() : null,
+    };
+  } catch (error) {
+    console.warn("图库缓存读取失败：", error);
+    return { currentResponse: null, currentJson: null, previousJson: null };
+  }
+}
+
+async function writeCachedLibrary(response, previousResponse) {
+  if (typeof caches === "undefined") return;
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    // 保存上一版数据，用于下次打开时计算新增统计
+    if (previousResponse) await cache.put(CACHE_PREVIOUS_URL, previousResponse);
+    await cache.put(CACHE_CURRENT_URL, response);
+  } catch (error) {
+    console.warn("图库缓存写入失败：", error);
   }
 }
 
@@ -190,7 +276,7 @@ function showLoadingState() {
   els.pageStatus.hidden = false;
   els.pageStatus.classList.remove("loadStateError");
   els.loadStateTitle.textContent = "正在加载图库统计";
-  els.loadStateDetail.textContent = "正在读取精简资源文件，请稍候…";
+  els.loadStateDetail.textContent = "首次访问需下载图库数据，之后打开将直接使用缓存，请稍候…";
   els.retryButton.hidden = true;
 }
 
@@ -860,9 +946,9 @@ function renderSelectedCatalogTags() {
   }
 }
 
-function applyCatalogFilters() {
+function applyCatalogFilters(preservePage = false) {
   const scoreRange = readScoreRange();
-  state.page = 1;
+  if (!preservePage) state.page = 1;
   if (!scoreRange.valid) {
     state.filtered = [];
     renderCatalogPage("请先修正评分范围后查看结果。");

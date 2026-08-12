@@ -673,9 +673,9 @@ function parseAdminFeedbackOffset(value) {
 
 async function handleAnimeLibrary(request, env) {
   const data = await loadMergedAnimeLibrary(request, env);
-  // 短缓存让管理员启停操作尽快生效，同时避免每次请求都重复合并
+  // 5 分钟缓存：让管理员启停操作尽快生效，同时显著减少每次请求的重复合并开销
   return json(data, 200, {
-    "Cache-Control": "public, max-age=60, s-maxage=60",
+    "Cache-Control": "public, max-age=300, s-maxage=300",
   });
 }
 
