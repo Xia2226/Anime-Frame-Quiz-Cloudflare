@@ -82,6 +82,8 @@ a { color: var(--accent-dark); text-decoration-thickness: 1px; text-underline-of
   background: rgba(255, 255, 255, .9);
   box-shadow: 0 10px 30px rgba(34, 48, 83, .07);
   backdrop-filter: blur(14px);
+  /* 悬停动效过渡：抬升、边框高亮、投影加深（与模式卡片一致） */
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
 }
 .announcementCardPinned {
   border-color: #cfd8ff;
@@ -89,6 +91,27 @@ a { color: var(--accent-dark); text-decoration-thickness: 1px; text-underline-of
 }
 .announcementsBar .announcementCard {
   position: relative;
+  /* 入场动效：顶部滑入 + 淡入 */
+  animation: announcementDrop .45s ease backwards;
+}
+/* 多条公告依次滑入，避免同时出现显得生硬 */
+.announcementsBar .announcementCard:nth-child(2) { animation-delay: .08s; }
+.announcementsBar .announcementCard:nth-child(3) { animation-delay: .16s; }
+/* 悬停动效：与首页模式卡片一致的抬升 + 边框高亮 + 投影加深 */
+.announcementsBar .announcementCard:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent);
+  box-shadow: 0 16px 34px rgba(49, 77, 204, .14);
+}
+@keyframes announcementDrop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .announcementsBar .announcementTitle {
   /* 为右上角关闭按钮预留空间，避免标题文字被遮挡 */
