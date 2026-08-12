@@ -150,7 +150,7 @@ async function loadLibrary() {
     const previous = previousRaw ? normalizePreviousLibrary(previousRaw) : null;
 
     state.anime = library.anime;
-    state.overview = calculateOverview(library.anime, library.declaredTags);
+    state.overview = calculateOverview(library.anime);
     state.delta = previous ? calculateDelta(library, previous) : null;
     state.yearStats = state.overview.yearStats;
     state.tags = state.overview.topTags.map(([name, animeCount]) => ({
@@ -288,6 +288,8 @@ function calculateDelta(current, previous) {
 
 function normalizeAnime(item, index) {
   if (!item || typeof item !== "object" || !Array.isArray(item.imageIds)) return null;
+  // 管理员停用的番剧不参与图库展示与统计（enabled 缺失时视为启用，兼容旧数据）
+  if (item.enabled === false) return null;
 
   const imageIds = new Set();
   for (const imageId of item.imageIds) {
@@ -421,7 +423,7 @@ function normalizeSearchText(value) {
   return String(value || "").normalize("NFKC").trim().toLocaleLowerCase("zh-CN");
 }
 
-function calculateOverview(anime, declaredTags) {
+function calculateOverview(anime) {
   let imageTotal = 0;
   let doneTotal = 0;
   let ratingsTotal = 0;
@@ -456,10 +458,6 @@ function calculateOverview(anime, declaredTags) {
       year.imageCount += item.imageCount;
       years.set(item.year, year);
     }
-  }
-
-  for (const [tag, count] of declaredTags) {
-    tagFrequency.set(tag, Math.max(tagFrequency.get(tag) || 0, count));
   }
 
   const usesWeightedAverage = weightedScoreCount > 0;
