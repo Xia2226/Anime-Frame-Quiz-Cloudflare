@@ -29,6 +29,7 @@ const ANNOUNCEMENT_TITLE_MAX_LENGTH = 80;
 const ANNOUNCEMENT_CONTENT_MAX_LENGTH = 2000;
 const ANNOUNCEMENT_DISPLAY_LIMIT = 20;
 const ANIME_LIBRARY_CACHE_SECONDS = 60 * 60;
+const ANIME_LIBRARY_CLIENT_CACHE_CONTROL = "private, no-store, max-age=0, must-revalidate";
 const FEEDBACK_RETENTION_DAYS = 30;
 const ANALYTICS_RETENTION_DAYS = 90;
 const ANALYTICS_PATH_MAX_LENGTH = 200;
@@ -577,21 +578,33 @@ async function handleAnimeLibrary(request, env, context) {
     const cached = await caches.default.match(cacheRequest);
     if (cached) {
       if (assetResponse.body) await assetResponse.body.cancel().catch(() => {});
-      return cached;
+      return createAnimeLibraryClientResponse(cached);
     }
   }
 
   const data = await mergeAnimeLibrary(await parseAnimeLibraryAsset(assetResponse), env);
-  // 浏览器每次重验证；边缘结果缓存一小时。缓存键包含题库 ETag 和 D1 启停版本，
-  // 因此后台启停番剧或重新部署题库后，下一次请求会立即生成新结果。
+  // 内部结果缓存一小时，但发给客户端的响应始终禁止缓存。这样每次请求都会进入 Worker，
+  // 再按题库 ETag 和 D1 启停版本选择缓存；后台启停或重新部署后可立即切换到新版本。
   // D1 或缓存版本表异常时仍返回静态题库，但不缓存降级结果，避免故障恢复后继续命中旧状态。
-  const response = cacheRequest
+  const cacheableResponse = cacheRequest
     ? json(data, 200, {
-      "Cache-Control": `public, max-age=0, s-maxage=${ANIME_LIBRARY_CACHE_SECONDS}, must-revalidate`,
+      "Cache-Control": `public, max-age=${ANIME_LIBRARY_CACHE_SECONDS}`,
     })
     : json(data);
-  if (cacheRequest) putCacheInBackground(context, cacheRequest, response, "anime_library");
-  return response;
+  if (cacheRequest) putCacheInBackground(context, cacheRequest, cacheableResponse, "anime_library");
+  return createAnimeLibraryClientResponse(cacheableResponse);
+}
+
+function createAnimeLibraryClientResponse(response) {
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", ANIME_LIBRARY_CLIENT_CACHE_CONTROL);
+  headers.delete("CDN-Cache-Control");
+  headers.delete("Cloudflare-CDN-Cache-Control");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function createAnimeLibraryCacheRequest(request, assetVersion, overrideVersion) {
