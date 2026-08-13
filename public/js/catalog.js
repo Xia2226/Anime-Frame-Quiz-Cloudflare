@@ -1,5 +1,13 @@
 const CATALOG_URL = new URL("../data/anime-library.json", import.meta.url);
 
+// 图片加载超时与候选图之间的节流延时：避免对图源（fancaps CDN）发起过快的连续请求
+const IMAGE_TIMEOUT_MS = 5000;
+const IMAGE_RETRY_DELAY_MS = 500;
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 let catalogPromise = null;
 
 export function loadCatalog() {
@@ -166,6 +174,8 @@ async function preloadQuestionImage(question, isStopped) {
     } catch (error) {
       if (error.name === "AbortError") throw error;
       lastError = error;
+      // 候选图之间稍作停顿，避免对图源发起过快的连续请求
+      await delay(IMAGE_RETRY_DELAY_MS);
     }
   }
   throw lastError || new Error("这道题的截图均无法加载。");
@@ -176,8 +186,21 @@ async function loadPreloadedImage(url) {
   image.referrerPolicy = "no-referrer";
   image.decoding = "async";
   await new Promise((resolve, reject) => {
-    image.onload = resolve;
-    image.onerror = () => reject(new Error("截图预加载失败"));
+    // 单张图加载超时保护，避免连接挂起时无限等待
+    const timer = window.setTimeout(() => {
+      image.onload = null;
+      image.onerror = null;
+      image.removeAttribute("src");
+      reject(new Error("截图预加载超时"));
+    }, IMAGE_TIMEOUT_MS);
+    image.onload = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    image.onerror = () => {
+      window.clearTimeout(timer);
+      reject(new Error("截图预加载失败"));
+    };
     image.src = url;
   });
   image.onload = null;

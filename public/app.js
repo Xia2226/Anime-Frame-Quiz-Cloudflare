@@ -10,6 +10,14 @@ const FLAG_STORAGE_KEY = 'anime-frame-quiz.flagged-questions.v1';
 const ANNOUNCEMENTS_CLOSED_KEY = 'anime-frame-quiz.closed-announcements.v1';
 const FLAG_CONTENT_MAX_LENGTH = 1900;
 const LOCAL_COUNT = GAME_CONFIG.localQuestionCount;
+// 图片加载超时与候选图之间的节流延时：避免对图源（fancaps CDN）发起过快的连续请求
+const IMAGE_TIMEOUT_MS = 5000;
+const IMAGE_RETRY_DELAY_MS = 500;
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const LOCAL_MAX_SCORE = LOCAL_COUNT * Math.max(...GAME_CONFIG.scoreThresholds.map((tier) => tier.points));
 const FREE_QUESTION_OPTIONS = Object.freeze([25, 50, 75, 100]);
 const DEFAULT_FREE_FILTER = Object.freeze({
@@ -1100,6 +1108,8 @@ async function showDecodedQuestionImage(question) {
     } catch (error) {
       if (error.name === 'AbortError') throw error;
       lastError = error;
+      // 候选图之间稍作停顿，避免对图源发起过快的连续请求
+      await delay(IMAGE_RETRY_DELAY_MS);
     }
   }
   throw lastError || new Error('这道题没有可用截图。');
@@ -1107,8 +1117,26 @@ async function showDecodedQuestionImage(question) {
 
 async function loadAndDecodeInto(image, url, token) {
   await new Promise((resolve, reject) => {
-    image.onload = resolve;
-    image.onerror = () => reject(new Error('截图加载失败，正在轮换候选图片。'));
+    // 单张图加载超时保护，避免连接挂起时无限等待
+    const timer = window.setTimeout(() => {
+      if (token !== state.imageToken) {
+        // 该加载已被新一题取代（例如中途退出后重新开局），只废弃自身、不触碰共享 <img>
+        reject(new DOMException('图片加载已取消', 'AbortError'));
+        return;
+      }
+      image.onload = null;
+      image.onerror = null;
+      image.removeAttribute('src');
+      reject(new Error('截图加载超时，正在轮换候选图片。'));
+    }, IMAGE_TIMEOUT_MS);
+    image.onload = () => {
+      window.clearTimeout(timer);
+      resolve();
+    };
+    image.onerror = () => {
+      window.clearTimeout(timer);
+      reject(new Error('截图加载失败，正在轮换候选图片。'));
+    };
     image.src = url;
   });
   if (token !== state.imageToken) throw new DOMException('图片加载已取消', 'AbortError');
