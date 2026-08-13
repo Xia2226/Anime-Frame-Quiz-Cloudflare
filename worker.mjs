@@ -1,4 +1,14 @@
 import { GAME_CONFIG } from "./public/js/game-config.js";
+import {
+  fetchWithRetry,
+  httpError,
+  json,
+  readJsonBody,
+  readJsonResponse,
+  redactLogMessage,
+  requireMethod,
+  withSecurityHeaders,
+} from "./src/http.mjs";
 
 const SAKUGABOORU_API_URL = "https://www.sakugabooru.com/post.json";
 const SAKUGABOORU_RELATED_TAG_API_URL = "https://www.sakugabooru.com/tag/related.json";
@@ -7,9 +17,7 @@ const DEEPSEEK_MODELS_API_URL = "https://api.deepseek.com/v1/models";
 const DEEPSEEK_BALANCE_API_URL = "https://api.deepseek.com/user/balance";
 const DEEPSEEK_TRANS_MODEL = "deepseek-v4-flash";
 
-const REQUEST_TIMEOUT_MS = 20000;
 const MAX_UPSTREAM_JSON_BYTES = 1024 * 1024;
-const MAX_UPSTREAM_ERROR_BYTES = 8 * 1024;
 const USERNAME_MAX_LENGTH = 24;
 const MAX_HARD_QUESTION_COUNT = 10000;
 const MAX_HARD_ELAPSED_MS = 7 * 24 * 60 * 60 * 1000;
@@ -20,6 +28,7 @@ const FEEDBACK_CONTACT_MAX_LENGTH = 128;
 const ANNOUNCEMENT_TITLE_MAX_LENGTH = 80;
 const ANNOUNCEMENT_CONTENT_MAX_LENGTH = 2000;
 const ANNOUNCEMENT_DISPLAY_LIMIT = 20;
+const ANIME_LIBRARY_CACHE_SECONDS = 60 * 60;
 const FEEDBACK_RETENTION_DAYS = 30;
 const ANALYTICS_RETENTION_DAYS = 90;
 const ANALYTICS_PATH_MAX_LENGTH = 200;
@@ -141,30 +150,30 @@ export default {
 
       if (url.pathname === "/api/announcements") {
         requireMethod(request, "GET");
-        return await handleAnnouncements(request, env);
+        return await handleAnnouncements(env);
       }
 
       if (url.pathname === "/api/admin/leaderboard/days") {
         requireMethod(request, "GET");
-        return await handleAdminLeaderboardDays(request, url, env);
+        return await handleAdminLeaderboardDays(url, env);
       }
 
       if (url.pathname === "/api/admin/leaderboard") {
         requireMethod(request, "GET");
-        return await handleAdminLeaderboardDetail(request, url, env);
+        return await handleAdminLeaderboardDetail(url, env);
       }
 
       if (url.pathname === "/api/admin/analytics") {
         requireMethod(request, "GET");
-        return await handleAdminAnalytics(request, url, env);
+        return await handleAdminAnalytics(url, env);
       }
 
       if (url.pathname === "/api/admin/feedback") {
         if (request.method === "DELETE") {
-          return await handleAdminFeedbackDelete(request, url, env);
+          return await handleAdminFeedbackDelete(url, env);
         }
         requireMethod(request, "GET");
-        return await handleAdminFeedbackList(request, url, env);
+        return await handleAdminFeedbackList(url, env);
       }
 
       if (url.pathname === "/api/admin/anime") {
@@ -172,23 +181,23 @@ export default {
           return await handleAdminAnimeList(request, url, env);
         }
         if (request.method === "PUT") {
-          return await handleAdminAnimeToggle(request, url, env);
+          return await handleAdminAnimeToggle(request, env);
         }
         requireMethod(request, "GET or PUT");
       }
 
       if (url.pathname === "/api/admin/announcements") {
         if (request.method === "GET") {
-          return await handleAdminAnnouncementsList(request, url, env);
+          return await handleAdminAnnouncementsList(url, env);
         }
         if (request.method === "POST") {
-          return await handleAdminAnnouncementsCreate(request, url, env);
+          return await handleAdminAnnouncementsCreate(request, env);
         }
         if (request.method === "PUT") {
           return await handleAdminAnnouncementsUpdate(request, url, env);
         }
         if (request.method === "DELETE") {
-          return await handleAdminAnnouncementsDelete(request, url, env);
+          return await handleAdminAnnouncementsDelete(url, env);
         }
         requireMethod(request, "GET, POST, PUT or DELETE");
       }
@@ -196,7 +205,7 @@ export default {
       // 图库资源文件由 Worker 合并管理员启停状态后返回，前台无需改动
       if (url.pathname === "/data/anime-library.json") {
         requireMethod(request, "GET");
-        return await handleAnimeLibrary(request, env);
+        return await handleAnimeLibrary(request, env, context);
       }
 
       if (url.pathname.startsWith("/api/")) {
@@ -231,38 +240,30 @@ export default {
         - (GAME_CONFIG.leaderboard.retentionDays - 1) * 24 * 60 * 60 * 1000,
     );
     const cutoffDay = getLeaderboardDayKey(cutoffDate);
-    const result = await env.DB.prepare("DELETE FROM daily_best WHERE day_key < ?")
-      .bind(cutoffDay)
-      .run();
-    console.log(JSON.stringify({
-      level: "info",
-      event: "leaderboard_retention_cleanup",
-      cutoffDay,
-      rowsDeleted: result.meta?.changes ?? null,
-    }));
-
     const feedbackCutoffMs = controller.scheduledTime
       - FEEDBACK_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    const feedbackResult = await env.DB.prepare(
-      "DELETE FROM feedback WHERE created_at < ?",
-    ).bind(feedbackCutoffMs).run();
-    console.log(JSON.stringify({
-      level: "info",
-      event: "feedback_retention_cleanup",
-      cutoffBefore: new Date(feedbackCutoffMs).toISOString(),
-      rowsDeleted: feedbackResult.meta?.changes ?? null,
-    }));
-
     const analyticsCutoffMs = controller.scheduledTime
       - ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    const analyticsResult = await env.DB.prepare(
-      "DELETE FROM page_view WHERE created_at < ?",
-    ).bind(analyticsCutoffMs).run();
+    const [leaderboardResult, feedbackResult, analyticsResult] = await env.DB.batch([
+      env.DB.prepare("DELETE FROM daily_best WHERE day_key < ?").bind(cutoffDay),
+      env.DB.prepare("DELETE FROM feedback WHERE created_at < ?").bind(feedbackCutoffMs),
+      env.DB.prepare("DELETE FROM page_view WHERE created_at < ?").bind(analyticsCutoffMs),
+    ]);
     console.log(JSON.stringify({
       level: "info",
-      event: "analytics_retention_cleanup",
-      cutoffBefore: new Date(analyticsCutoffMs).toISOString(),
-      rowsDeleted: analyticsResult.meta?.changes ?? null,
+      event: "retention_cleanup",
+      leaderboard: {
+        cutoffDay,
+        rowsDeleted: leaderboardResult.meta?.changes ?? null,
+      },
+      feedback: {
+        cutoffBefore: new Date(feedbackCutoffMs).toISOString(),
+        rowsDeleted: feedbackResult.meta?.changes ?? null,
+      },
+      analytics: {
+        cutoffBefore: new Date(analyticsCutoffMs).toISOString(),
+        rowsDeleted: analyticsResult.meta?.changes ?? null,
+      },
     }));
   },
 };
@@ -299,108 +300,6 @@ function createSitemapResponse(url) {
     },
   }));
 }
-function requireMethod(request, expected) {
-  if (request.method !== expected) {
-    const error = httpError(405, `仅支持 ${expected} 请求`);
-    error.code = "METHOD_NOT_ALLOWED";
-    throw error;
-  }
-}
-
-async function readJsonBody(request, maximumBytes) {
-  const text = await readBodyTextWithLimit(request, maximumBytes, () => httpError(413, "请求体过大"));
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch (error) {
-    throw httpError(400, `JSON 格式错误: ${error.message}`);
-  }
-}
-
-async function readBodyTextWithLimit(message, maximumBytes, tooLargeErrorFactory) {
-  const declaredLength = Number(message.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
-    throw tooLargeErrorFactory();
-  }
-  if (!message.body) return "";
-
-  const reader = message.body.getReader();
-  const chunks = [];
-  let totalBytes = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
-      totalBytes += chunk.byteLength;
-      if (totalBytes > maximumBytes) {
-        await reader.cancel().catch(() => {});
-        throw tooLargeErrorFactory();
-      }
-      chunks.push(chunk);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return new TextDecoder().decode(concatenateBytes(chunks, totalBytes));
-}
-
-async function readJsonResponse(response, maximumBytes, label) {
-  const text = await readBodyTextWithLimit(
-    response,
-    maximumBytes,
-    () => httpError(502, `${label}响应过大`),
-  );
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch (error) {
-    throw httpError(502, `${label}返回了无效 JSON: ${error.message}`);
-  }
-}
-
-async function readResponseSnippet(response, maximumBytes = MAX_UPSTREAM_ERROR_BYTES) {
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const chunks = [];
-  let totalBytes = 0;
-  let truncated = false;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
-      const remaining = maximumBytes - totalBytes;
-      if (chunk.byteLength > remaining) {
-        if (remaining > 0) chunks.push(chunk.slice(0, remaining));
-        totalBytes = maximumBytes;
-        truncated = true;
-        await reader.cancel().catch(() => {});
-        break;
-      }
-      chunks.push(chunk);
-      totalBytes += chunk.byteLength;
-      if (totalBytes === maximumBytes) {
-        truncated = true;
-        await reader.cancel().catch(() => {});
-        break;
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const text = new TextDecoder().decode(concatenateBytes(chunks, totalBytes));
-  return truncated ? `${text}…` : text;
-}
-
-function concatenateBytes(chunks, totalBytes) {
-  const result = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    result.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return result;
-}
-
 async function createHardSources(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw httpError(400, "请求体必须是对象");
@@ -551,13 +450,7 @@ async function handleLeaderboardGet(request, url, env, context) {
   const response = json({ dayKey, mode, entries }, 200, {
     "Cache-Control": `public, max-age=${GAME_CONFIG.leaderboard.cacheSeconds}`,
   });
-  context.waitUntil(caches.default.put(cacheRequest, response.clone()).catch((error) => {
-    console.error(JSON.stringify({
-      level: "error",
-      event: "leaderboard_cache_put_failed",
-      error: redactLogMessage(error?.message || error),
-    }));
-  }));
+  putCacheInBackground(context, cacheRequest, response, "leaderboard");
   return response;
 }
 
@@ -604,20 +497,20 @@ async function handleFeedbackPost(request, env) {
   return json({ ok: true, createdAt });
 }
 
-async function handleAdminFeedbackList(request, url, env) {
+async function handleAdminFeedbackList(url, env) {
   requireLeaderboardDatabase(env);
   const typeFilter = parseAdminFeedbackTypeFilter(url.searchParams.get("type"));
-  const limit = parseAdminFeedbackLimit(url.searchParams.get("limit"));
-  const offset = parseAdminFeedbackOffset(url.searchParams.get("offset"));
+  const limit = parsePageLimit(url.searchParams.get("limit"));
+  const offset = parsePageOffset(url.searchParams.get("offset"));
   const conditions = typeFilter ? "WHERE type = ?" : "";
   const bindArgs = typeFilter ? [typeFilter] : [];
-  const countResult = await env.DB.prepare(
-    `SELECT COUNT(*) AS total FROM feedback ${conditions}`,
-  ).bind(...bindArgs).first();
-  const listResult = await env.DB.prepare(
-    `SELECT id, type, content, contact, created_at FROM feedback ${conditions}
-     ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-  ).bind(...bindArgs, limit, offset).all();
+  const [countResult, listResult] = await env.DB.batch([
+    env.DB.prepare(`SELECT COUNT(*) AS total FROM feedback ${conditions}`).bind(...bindArgs),
+    env.DB.prepare(
+      `SELECT id, type, content, contact, created_at FROM feedback ${conditions}
+       ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+    ).bind(...bindArgs, limit, offset),
+  ]);
   const items = (listResult.results || []).map((row) => ({
     id: row.id,
     type: row.type,
@@ -625,18 +518,18 @@ async function handleAdminFeedbackList(request, url, env) {
     contact: row.contact,
     createdAt: row.created_at,
   }));
-  return json({ total: countResult?.total ?? 0, limit, offset, items });
+  return json({ total: countResult.results?.[0]?.total ?? 0, limit, offset, items });
 }
 
-async function handleAdminFeedbackDelete(request, url, env) {
+async function handleAdminFeedbackDelete(url, env) {
   requireLeaderboardDatabase(env);
-  const id = parseAdminFeedbackId(url.searchParams.get("id"));
+  const id = parsePositiveId(url.searchParams.get("id"));
   const result = await env.DB.prepare("DELETE FROM feedback WHERE id = ?").bind(id).run();
   if (!(result.meta?.changes > 0)) throw httpError(404, "反馈记录不存在");
   return json({ ok: true });
 }
 
-function parseAdminFeedbackId(value) {
+function parsePositiveId(value) {
   const id = Number(value);
   if (!Number.isSafeInteger(id) || id <= 0) throw httpError(400, "id 无效");
   return id;
@@ -651,7 +544,7 @@ function parseAdminFeedbackTypeFilter(value) {
   return type;
 }
 
-function parseAdminFeedbackLimit(value) {
+function parsePageLimit(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return 20;
   const limit = Number(raw);
@@ -661,7 +554,7 @@ function parseAdminFeedbackLimit(value) {
   return limit;
 }
 
-function parseAdminFeedbackOffset(value) {
+function parsePageOffset(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return 0;
   const offset = Number(raw);
@@ -671,12 +564,53 @@ function parseAdminFeedbackOffset(value) {
   return offset;
 }
 
-async function handleAnimeLibrary(request, env) {
-  const data = await loadMergedAnimeLibrary(request, env);
-  // 5 分钟缓存：让管理员启停操作尽快生效，同时显著减少每次请求的重复合并开销
-  return json(data, 200, {
-    "Cache-Control": "public, max-age=300, s-maxage=300",
-  });
+async function handleAnimeLibrary(request, env, context) {
+  const [assetResponse, overrideVersion] = await Promise.all([
+    fetchAnimeLibraryAssetResponse(request, env),
+    loadAnimeOverrideVersionSafely(env.DB),
+  ]);
+  const assetVersion = assetResponse.headers.get("etag");
+  const cacheRequest = assetVersion && overrideVersion !== null
+    ? createAnimeLibraryCacheRequest(request, assetVersion, overrideVersion)
+    : null;
+  if (cacheRequest) {
+    const cached = await caches.default.match(cacheRequest);
+    if (cached) {
+      if (assetResponse.body) await assetResponse.body.cancel().catch(() => {});
+      return cached;
+    }
+  }
+
+  const data = await mergeAnimeLibrary(await parseAnimeLibraryAsset(assetResponse), env);
+  // 浏览器每次重验证；边缘结果缓存一小时。缓存键包含题库 ETag 和 D1 启停版本，
+  // 因此后台启停番剧或重新部署题库后，下一次请求会立即生成新结果。
+  // D1 或缓存版本表异常时仍返回静态题库，但不缓存降级结果，避免故障恢复后继续命中旧状态。
+  const response = cacheRequest
+    ? json(data, 200, {
+      "Cache-Control": `public, max-age=0, s-maxage=${ANIME_LIBRARY_CACHE_SECONDS}, must-revalidate`,
+    })
+    : json(data);
+  if (cacheRequest) putCacheInBackground(context, cacheRequest, response, "anime_library");
+  return response;
+}
+
+function createAnimeLibraryCacheRequest(request, assetVersion, overrideVersion) {
+  const cacheUrl = new URL("/data/anime-library.json", request.url);
+  cacheUrl.search = "";
+  cacheUrl.searchParams.set("asset", assetVersion);
+  cacheUrl.searchParams.set("overrides", overrideVersion);
+  return new Request(cacheUrl, { method: "GET" });
+}
+
+function putCacheInBackground(context, request, response, cacheName) {
+  context.waitUntil(caches.default.put(request, response.clone()).catch((error) => {
+    console.error(JSON.stringify({
+      level: "error",
+      event: "cache_put_failed",
+      cache: cacheName,
+      error: redactLogMessage(error?.message || error),
+    }));
+  }));
 }
 
 async function handleAdminAnimeList(request, url, env) {
@@ -688,8 +622,8 @@ async function handleAdminAnimeList(request, url, env) {
   if (!["", "enabled", "disabled"].includes(status)) {
     throw httpError(400, "status 必须是 enabled 或 disabled");
   }
-  const limit = parseAdminFeedbackLimit(url.searchParams.get("limit"));
-  const offset = parseAdminFeedbackOffset(url.searchParams.get("offset"));
+  const limit = parsePageLimit(url.searchParams.get("limit"));
+  const offset = parsePageOffset(url.searchParams.get("offset"));
   const items = anime
     .filter((item) => {
       if (!item || typeof item !== "object") return false;
@@ -726,7 +660,7 @@ async function handleAdminAnimeList(request, url, env) {
   });
 }
 
-async function handleAdminAnimeToggle(request, url, env) {
+async function handleAdminAnimeToggle(request, env) {
   requireLeaderboardDatabase(env);
   const body = await readJsonBody(request, 16 * 1024);
   const anidbId = String(body?.anidbId ?? "").trim();
@@ -736,17 +670,22 @@ async function handleAdminAnimeToggle(request, url, env) {
   const exists = (Array.isArray(data?.anime) ? data.anime : [])
     .some((item) => String(item?.anidbId ?? "") === anidbId);
   if (!exists) throw httpError(404, "图库中不存在该番剧");
-  await env.DB.prepare(`
-    INSERT INTO anime_override (anidb_id, enabled, updated_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(anidb_id) DO UPDATE SET
-      enabled = excluded.enabled,
-      updated_at = excluded.updated_at
-  `).bind(anidbId, enabled ? 1 : 0, Date.now()).run();
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO anime_override (anidb_id, enabled, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(anidb_id) DO UPDATE SET
+        enabled = excluded.enabled,
+        updated_at = excluded.updated_at
+    `).bind(anidbId, enabled ? 1 : 0, Date.now()),
+    env.DB.prepare(
+      "UPDATE anime_library_cache_version SET version = version + 1 WHERE id = 1",
+    ),
+  ]);
   return json({ ok: true, anidbId, enabled });
 }
 
-async function handleAnnouncements(request, env) {
+async function handleAnnouncements(env) {
   requireLeaderboardDatabase(env);
   const result = await env.DB.prepare(
     "SELECT id, title, content, pinned, created_at FROM announcements"
@@ -763,23 +702,23 @@ async function handleAnnouncements(request, env) {
   return json({ items });
 }
 
-async function handleAdminAnnouncementsList(request, url, env) {
+async function handleAdminAnnouncementsList(url, env) {
   requireLeaderboardDatabase(env);
   const status = String(url.searchParams.get("status") || "").trim();
   if (!["", "active", "inactive"].includes(status)) {
     throw httpError(400, "status 必须是 active 或 inactive");
   }
-  const limit = parseAdminFeedbackLimit(url.searchParams.get("limit"));
-  const offset = parseAdminFeedbackOffset(url.searchParams.get("offset"));
+  const limit = parsePageLimit(url.searchParams.get("limit"));
+  const offset = parsePageOffset(url.searchParams.get("offset"));
   const conditions = status ? "WHERE active = ?" : "";
   const bindArgs = status ? [status === "active" ? 1 : 0] : [];
-  const countResult = await env.DB.prepare(
-    `SELECT COUNT(*) AS total FROM announcements ${conditions}`,
-  ).bind(...bindArgs).first();
-  const listResult = await env.DB.prepare(
-    `SELECT id, title, content, pinned, active, created_at, updated_at FROM announcements ${conditions}
-     ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
-  ).bind(...bindArgs, limit, offset).all();
+  const [countResult, listResult] = await env.DB.batch([
+    env.DB.prepare(`SELECT COUNT(*) AS total FROM announcements ${conditions}`).bind(...bindArgs),
+    env.DB.prepare(
+      `SELECT id, title, content, pinned, active, created_at, updated_at FROM announcements ${conditions}
+       ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+    ).bind(...bindArgs, limit, offset),
+  ]);
   const items = (listResult.results || []).map((row) => ({
     id: row.id,
     title: row.title,
@@ -789,10 +728,10 @@ async function handleAdminAnnouncementsList(request, url, env) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
-  return json({ total: countResult?.total ?? 0, limit, offset, items });
+  return json({ total: countResult.results?.[0]?.total ?? 0, limit, offset, items });
 }
 
-async function handleAdminAnnouncementsCreate(request, url, env) {
+async function handleAdminAnnouncementsCreate(request, env) {
   requireLeaderboardDatabase(env);
   const body = await readJsonBody(request, 16 * 1024);
   const announcement = normalizeAnnouncementSubmission(body);
@@ -813,7 +752,7 @@ async function handleAdminAnnouncementsCreate(request, url, env) {
 
 async function handleAdminAnnouncementsUpdate(request, url, env) {
   requireLeaderboardDatabase(env);
-  const id = parseAdminFeedbackId(url.searchParams.get("id"));
+  const id = parsePositiveId(url.searchParams.get("id"));
   const body = await readJsonBody(request, 16 * 1024);
   // 更新接口必须显式指定 active，避免缺省置为上架而回滚管理员的上下架操作
   if (!body || typeof body.active !== "boolean") {
@@ -834,9 +773,9 @@ async function handleAdminAnnouncementsUpdate(request, url, env) {
   return json({ ok: true, id });
 }
 
-async function handleAdminAnnouncementsDelete(request, url, env) {
+async function handleAdminAnnouncementsDelete(url, env) {
   requireLeaderboardDatabase(env);
-  const id = parseAdminFeedbackId(url.searchParams.get("id"));
+  const id = parsePositiveId(url.searchParams.get("id"));
   const result = await env.DB.prepare("DELETE FROM announcements WHERE id = ?").bind(id).run();
   if (!(result.meta?.changes > 0)) throw httpError(404, "公告不存在");
   return json({ ok: true });
@@ -873,7 +812,11 @@ function normalizeAnnouncementContent(value, fieldName, maximumLength) {
 }
 
 async function loadMergedAnimeLibrary(request, env) {
-  const data = await fetchAnimeLibraryAsset(request, env);
+  const assetResponse = await fetchAnimeLibraryAssetResponse(request, env);
+  return mergeAnimeLibrary(await parseAnimeLibraryAsset(assetResponse), env);
+}
+
+async function mergeAnimeLibrary(data, env) {
   if (!data || typeof data !== "object" || !Array.isArray(data.anime)) {
     throw httpError(502, "图库资源文件格式无效");
   }
@@ -899,7 +842,7 @@ async function loadMergedAnimeLibrary(request, env) {
   return data;
 }
 
-async function fetchAnimeLibraryAsset(request, env) {
+async function fetchAnimeLibraryAssetResponse(request, env) {
   if (!env.ASSETS) throw httpError(500, "静态资源绑定不可用");
   const assetUrl = new URL("/data/anime-library.json", request.url);
   const assetResponse = await env.ASSETS.fetch(new Request(assetUrl, {
@@ -912,7 +855,15 @@ async function fetchAnimeLibraryAsset(request, env) {
       assetResponse.status === 404 ? "图库资源文件不存在" : "图库资源读取失败",
     );
   }
-  return assetResponse.json();
+  return assetResponse;
+}
+
+async function parseAnimeLibraryAsset(response) {
+  try {
+    return await response.json();
+  } catch {
+    throw httpError(502, "图库资源文件不是有效 JSON");
+  }
 }
 
 async function loadAnimeOverrides(db) {
@@ -922,6 +873,32 @@ async function loadAnimeOverrides(db) {
     overrides.set(String(row.anidb_id), Number(row.enabled) === 1);
   }
   return overrides;
+}
+
+async function loadAnimeOverrideVersion(db) {
+  if (!db) return "no-database";
+  const row = await db.prepare(`
+    SELECT
+      (SELECT version FROM anime_library_cache_version WHERE id = 1) AS version,
+      (SELECT updated_at FROM anime_override ORDER BY updated_at DESC LIMIT 1) AS updated_at
+  `).first();
+  return [
+    String(Number(row?.version) || 0),
+    String(Number(row?.updated_at) || 0),
+  ].join("-");
+}
+
+async function loadAnimeOverrideVersionSafely(db) {
+  try {
+    return await loadAnimeOverrideVersion(db);
+  } catch (error) {
+    console.error(JSON.stringify({
+      level: "warn",
+      event: "anime_override_version_load_failed",
+      error: redactLogMessage(error?.message || error),
+    }));
+    return null;
+  }
 }
 
 async function handleTrackView(request, env) {
@@ -950,7 +927,7 @@ function hashClientIp(request) {
   return (hash >>> 0).toString(36);
 }
 
-async function handleAdminLeaderboardDays(request, url, env) {
+async function handleAdminLeaderboardDays(url, env) {
   requireLeaderboardDatabase(env);
   const days = parseAdminDays(url.searchParams.get("days"), 14, 1, 90);
   const todayKey = getLeaderboardDayKey();
@@ -982,34 +959,39 @@ async function handleAdminLeaderboardDays(request, url, env) {
   return json({ days: daysList });
 }
 
-async function handleAdminLeaderboardDetail(request, url, env) {
+async function handleAdminLeaderboardDetail(url, env) {
   requireLeaderboardDatabase(env);
   const mode = normalizeLeaderboardMode(url.searchParams.get("mode"));
   const dayKey = parseAdminDayKey(url.searchParams.get("dayKey")) || getLeaderboardDayKey();
-  const countResult = await env.DB.prepare(
-    "SELECT COUNT(*) AS total FROM daily_best WHERE day_key = ? AND mode = ?",
-  ).bind(dayKey, mode).first();
-  const listResult = await createLeaderboardSelectStatement(env.DB, mode, dayKey).all();
+  const [countResult, listResult] = await env.DB.batch([
+    env.DB.prepare(
+      "SELECT COUNT(*) AS total FROM daily_best WHERE day_key = ? AND mode = ?",
+    ).bind(dayKey, mode),
+    createLeaderboardSelectStatement(env.DB, mode, dayKey),
+  ]);
   const entries = formatLeaderboardEntries(listResult.results || []);
-  return json({ dayKey, mode, total: countResult?.total ?? 0, entries });
+  return json({ dayKey, mode, total: countResult.results?.[0]?.total ?? 0, entries });
 }
 
-async function handleAdminAnalytics(request, url, env) {
+async function handleAdminAnalytics(url, env) {
   requireLeaderboardDatabase(env);
   const days = parseAdminDays(url.searchParams.get("days"), 30, 1, 90);
   const cutoff = subtractDaysFromDayKey(getLeaderboardDayKey(), days - 1);
-  const dailyResult = await env.DB.prepare(`
-    SELECT date, COUNT(*) AS pv, COUNT(DISTINCT ip_hash) AS uv
-    FROM page_view
-    WHERE date >= ?
-    GROUP BY date
-    ORDER BY date ASC
-  `).bind(cutoff).all();
-  const totalResult = await env.DB.prepare(`
-    SELECT COUNT(*) AS pv, COUNT(DISTINCT ip_hash) AS uv
-    FROM page_view
-    WHERE date >= ?
-  `).bind(cutoff).first();
+  const [dailyResult, totalResult] = await env.DB.batch([
+    env.DB.prepare(`
+      SELECT date, COUNT(*) AS pv, COUNT(DISTINCT ip_hash) AS uv
+      FROM page_view
+      WHERE date >= ?
+      GROUP BY date
+      ORDER BY date ASC
+    `).bind(cutoff),
+    env.DB.prepare(`
+      SELECT COUNT(*) AS pv, COUNT(DISTINCT ip_hash) AS uv
+      FROM page_view
+      WHERE date >= ?
+    `).bind(cutoff),
+  ]);
+  const totals = totalResult.results?.[0];
   return json({
     days: (dailyResult.results || []).map((row) => ({
       date: row.date,
@@ -1017,8 +999,8 @@ async function handleAdminAnalytics(request, url, env) {
       uv: Number(row.uv),
     })),
     totals: {
-      pv: Number(totalResult?.pv) || 0,
-      uv: Number(totalResult?.uv) || 0,
+      pv: Number(totals?.pv) || 0,
+      uv: Number(totals?.uv) || 0,
     },
   });
 }
@@ -1585,81 +1567,6 @@ async function validateDeepSeekApiKey(apiKey) {
   }
 }
 
-async function fetchWithRetry(url, options = {}, retryOptions = {}) {
-  const attempts = Math.max(1, retryOptions.attempts || 1);
-  let lastError;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const response = await fetchWithTimeout(url, options, retryOptions.timeoutMs || REQUEST_TIMEOUT_MS);
-      if (response.ok) return response;
-      const body = await readResponseSnippet(response).catch(() => "");
-      const error = new Error(`${retryOptions.label || "上游 API"} HTTP ${response.status}${body ? `: ${body.slice(0, 500)}` : ""}`);
-      error.status = response.status;
-      lastError = error;
-      if (![429, 500, 502, 503, 504].includes(response.status) || attempt === attempts - 1) throw error;
-    } catch (error) {
-      lastError = error;
-      if (error.status || attempt === attempts - 1) throw error;
-    }
-    await delay(500 * (2 ** attempt) + Math.round(Math.random() * 200));
-  }
-  throw lastError || new Error(`${retryOptions.label || "上游 API"} 请求失败`);
-}
-
-async function fetchWithTimeout(url, options, timeoutMs) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function withSecurityHeaders(response) {
-  const headers = new Headers(response.headers);
-  headers.set("X-Content-Type-Options", "nosniff");
-  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  headers.set("Content-Security-Policy", [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self'",
-    "img-src 'self' data: blob: https://cdni.fancaps.net https://sakugabooru.com https://*.sakugabooru.com",
-    "media-src 'self' blob: https://sakugabooru.com https://*.sakugabooru.com",
-    "connect-src 'self'",
-    "base-uri 'self'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-  ].join("; "));
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
-}
-
-function json(value, status = 200, additionalHeaders = {}) {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
-      ...additionalHeaders,
-    },
-  });
-}
-
-function httpError(statusCode, message) {
-  const error = new Error(message);
-  error.statusCode = statusCode;
-  return error;
-}
-
-function redactLogMessage(value) {
-  return String(value || "Unknown error")
-    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
-    .slice(0, 500);
-}
-
 function normalizeTitle(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -1671,8 +1578,4 @@ function shuffle(items) {
     [copy[index], copy[other]] = [copy[other], copy[index]];
   }
   return copy;
-}
-
-function delay(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

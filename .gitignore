@@ -10,12 +10,16 @@ node_modules/
 # Legacy local runtime data
 /data/
 
-# Build tooling & large build-time source dataset (never served or committed)
-scripts/
+# Legacy local library builder & large build-time source dataset (never served or committed)
+scripts/*
+!scripts/remove-anime-image.mjs
+!scripts/lib/
+scripts/lib/*
+!scripts/lib/file-transaction.mjs
 resources/
 .tmp-workers-types/
 
-# Generated cover images (rebuilt via npm run build:data)
+# Generated cover images (maintained by the optional AnimeShotDB-tools repository)
 public/data/covers/
 
 # Local test images

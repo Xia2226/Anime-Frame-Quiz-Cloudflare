@@ -6,18 +6,18 @@
   "scripts": {
     "start": "wrangler dev",
     "deploy": "wrangler deploy",
-    "build:data": "node scripts/build-anime-library.mjs",
-    "check:data": "node scripts/build-anime-library.mjs --check",
-    "check:js": "node --check worker.mjs && node --check public/app.js && node --check public/library.js && node --check public/js/catalog.js && node --check public/js/game-config.js && node --check public/js/hard-provider.js && node --check public/js/leaderboard.js && node --check public/js/quiz-engine.js",
+    "test": "node --test",
+    "check:data": "node tools/validate-anime-library.mjs",
+    "check:js": "node tools/check-javascript.mjs",
+    "check:deploy": "wrangler deploy --dry-run",
     "db:migrate:local": "wrangler d1 migrations apply anime-frame-quiz-leaderboard --local",
     "db:migrate:remote": "wrangler d1 migrations apply anime-frame-quiz-leaderboard --remote",
-    "check": "npm run check:data && npm run check:js && wrangler deploy --dry-run"
+    "check": "npm test && npm run check:data && npm run check:js && npm run check:deploy"
   },
   "engines": {
     "node": ">=22.19.0"
   },
   "devDependencies": {
-    "undici": "^7.12.0",
     "wrangler": "^4.118.0"
   }
 }

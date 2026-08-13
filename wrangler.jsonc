@@ -9,7 +9,14 @@
     "binding": "ASSETS",
     // 只让需要 Worker 逻辑的路径先进 Worker：HTML 入口（www→裸域 301）、
     // 图库 JSON（合并管理员启停状态）；CSS/JS/封面等纯静态资源由资产 CDN 直出
-    "run_worker_first": ["/", "/*.html", "/data/anime-library.json"]
+    "run_worker_first": [
+      "/api/*",
+      "/robots.txt",
+      "/sitemap.xml",
+      "/",
+      "/*.html",
+      "/data/anime-library.json"
+    ]
   },
   "d1_databases": [
     {

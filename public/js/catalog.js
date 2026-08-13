@@ -233,7 +233,7 @@ export function normalizeSearchText(value) {
 
 function normalizeCatalog(value) {
   if (!Array.isArray(value?.anime) || typeof value?.imageBase !== "string") {
-    throw new Error("精简题库格式不兼容，请重新运行 npm run build:data");
+    throw new Error("精简题库格式不兼容，请使用 AnimeShotDB-tools 重新生成题库");
   }
   const anime = value.anime.map((item) => {
     const tags = [...new Set([...(item.tags || []), ...(item.metaTags || [])].filter((tag) => typeof tag === "string" && tag))];
