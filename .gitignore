@@ -16,7 +16,8 @@ scripts/*
 !scripts/lib/
 scripts/lib/*
 !scripts/lib/file-transaction.mjs
-resources/
+resources/*
+!resources/fancaps_anime_images.jsonl
 .tmp-workers-types/
 
 # Generated cover images (maintained by the optional AnimeShotDB-tools repository)
