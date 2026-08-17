@@ -5,7 +5,8 @@ node_modules/
 .wrangler-xdg/
 .wrangler-home/
 .wrangler-tmp/
-.dev.vars
+.dev.vars*
+.env*
 
 # Legacy local runtime data
 /data/

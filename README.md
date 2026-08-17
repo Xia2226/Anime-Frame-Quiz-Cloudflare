@@ -40,7 +40,7 @@
 - **运营后台**：支持管理榜单、访问数据、反馈、番剧启停与站内公告，入口为 `/admin.html`。
 - **顺滑答题体验**：经典与自由模式在开局预解码 5 道题，并持续预加载后续画面，避免逐题请求服务端。
 
-> 困难挑战需要玩家自行提供 DeepSeek API Key，用于批量解析作品名。Key 仅保存在当前浏览器会话，通过请求头使用；不会写入源码、D1 或日志。
+> 困难挑战支持两种 DeepSeek Key 来源：可由玩家在浏览器会话中提供，也可使用网站托管的 Worker Secret。当前部署配置为网站 Key 模式；网站 Key 只在 Worker 中读取，不会发送到浏览器、写入 D1 或出现在 API 响应中。
 
 ## 运行架构
 
@@ -109,6 +109,32 @@ Wrangler 默认会在 <http://localhost:8787> 启动本地 Worker 和静态资�
 
 如需绑定自定义域名，请在 Cloudflare Dashboard 中为该 Worker 配置路由或自定义域。正式上线前，请务必为 `/admin.html` 与 `/api/admin/*` 配置 [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) 或等效的访问控制；项目不内置管理员登录系统，直接公开这些接口会使后台暴露在公网。
 
+### DeepSeek API Key 模式
+
+困难挑战通过 `DEEPSEEK_API_KEY_MODE` 切换 Key 来源，该开关位于 [wrangler.jsonc](./wrangler.jsonc)：
+
+| 值 | 行为 |
+| --- | --- |
+| `user` | 保留原有流程：玩家输入自己的 Key，浏览器校验模型权限与余额后开始游戏；Key 仅保存在当前标签页会话中。 |
+| `site`（当前部署配置） | 使用网站在 Cloudflare 中配置的 `DEEPSEEK_API_KEY` Secret；首页点击困难挑战后直接开始，不显示 Key 输入弹窗。 |
+
+网站 Key 模式的推荐配置：
+
+1. 在 Cloudflare Dashboard 打开 **Workers & Pages → 当前 Worker → Settings → Variables and Secrets → Add**。
+2. 新增类型为 **Secret** 的变量 `DEEPSEEK_API_KEY`，值填写 DeepSeek API Key。保存后其值不会再显示。
+3. 确认 [wrangler.jsonc](./wrangler.jsonc) 中的 `DEEPSEEK_API_KEY_MODE` 为 `site`。
+4. 执行 `npm run check` 和 `npm run deploy`。
+
+也可以通过 Wrangler 的交互式输入配置 Secret；不要把 Key 写在命令参数、`vars` 或源码中：
+
+~~~powershell
+npx wrangler secret put DEEPSEEK_API_KEY
+~~~
+
+本地调试网站 Key 模式时，在被 Git 忽略的 `.dev.vars` 中写入 `DEEPSEEK_API_KEY=你的Key`，并把本地使用的 `DEEPSEEK_API_KEY_MODE` 切换为 `site`。切回 `user` 后无需配置网站 Secret。
+
+> 网站 Key 模式会由站点运营者承担 DeepSeek 调用费用。公开部署时建议在 Cloudflare 侧为 `/api/hard/*` 配置速率限制、WAF 或 Turnstile 等防滥用措施。
+
 ## 题库与维护工具
 
 项目运行时使用两份已提交的精简 JSON：
@@ -166,8 +192,9 @@ https://github.com/Xia2226/AnimeShotDB-tools
 
 | 分类 | 端点 | 方法 | 说明 |
 | --- | --- | --- | --- |
-| 困难挑战 | `/api/deepseek/validate` | `POST` | 校验访问者的 DeepSeek Key、模型权限与余额。 |
-| 困难挑战 | `/api/hard/sources`、`/api/hard/resolve` | `POST` | 获取候选题源并批量解析题目。 |
+| 困难挑战 | `/api/hard/config` | `GET` | 返回 `user` 或 `site` 模式，不包含任何 Key。 |
+| 困难挑战 | `/api/deepseek/validate` | `POST` | 在 `user` 模式中校验访问者 Key、模型权限与余额。 |
+| 困难挑战 | `/api/hard/sources`、`/api/hard/resolve` | `POST` | 获取候选题源并按当前配置的 Key 来源批量解析题目。 |
 | 困难挑战 | `/api/hard/video-proxy` | `GET` | 安全代理 Sakugabooru 视频，支持 Range 请求。 |
 | 对局 | `/api/leaderboard?mode=classic或hard` | `GET` / `POST` | 读取或提交当日排行榜。 |
 | 站点 | `/api/feedback`、`/api/track` | `POST` | 提交反馈与匿名页面访问统计。 |
@@ -178,14 +205,15 @@ https://github.com/Xia2226/AnimeShotDB-tools
 | 后台 | `/api/admin/anime` | `GET` / `PUT` | 查询与启停番剧。 |
 | 后台 | `/api/admin/announcements` | `GET` / `POST` / `PUT` / `DELETE` | 管理公告。 |
 
-DeepSeek Key 使用 `X-DeepSeek-Api-Key` 请求头传递。Worker 会限制请求体和上游响应大小，并对日志里的 Bearer Token 与 `sk-` Key 脱敏。
+`user` 模式通过 `X-DeepSeek-Api-Key` 请求头接收访问者 Key；`site` 模式忽略客户端 Key，只读取 Worker 的 `DEEPSEEK_API_KEY` Secret。Worker 会限制请求体和上游响应大小，并对日志里的 Bearer Token 与 `sk-` Key 脱敏。
 
 ## 安全、数据与版权
 
 - CSP 仅允许同域脚本和接口，以及所需的 FanCaps、Sakugabooru 图片与视频资源。
 - 视频代理只接受 Sakugabooru 的 HTTPS MP4 / WebM 地址，避免形成通用 SSRF 代理。
 - 排行榜会校验题量、正确数、可达分数与用时；公开浏览器客户端无法做到绝对防刷。如需进一步限制滥用，可按实际套餐配置 Cloudflare Access、Turnstile 或平台限流。
-- 请勿把 API Key、`.dev.vars`、`.wrangler/` 或其他密钥提交到版本库。
+- 请勿把 API Key、`.dev.vars*`、`.env*`、`.wrangler/` 或其他密钥提交到版本库。
+- 网站 Key 永远不应出现在前端、`wrangler.jsonc` 的 `vars`、URL、D1、日志或 API 响应中。
 - 使用或部署前，请自行核对 [FanCaps](https://fancaps.net/)、[Sakugabooru](https://www.sakugabooru.com/)、[Bangumi](https://bangumi.tv/)、[AniDB](https://anidb.net/) 与 [DeepSeek](https://www.deepseek.com/) 的使用条款。
 
 本项目仅用于个人学习、娱乐和非商业用途。动画截图及番剧资料的版权归原权利人所有，第三方服务由各自提供方维护。

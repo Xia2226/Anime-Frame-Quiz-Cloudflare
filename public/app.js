@@ -68,6 +68,7 @@ const state = {
   catalog: null, engine: null, provider: null, mode: null,
   launchToken: 0, imageToken: 0, hardValidationToken: 0,
   hardValidationController: null,
+  hardApiKeyMode: "user", hardConfigPromise: null, hardEntryPending: false,
   leaderboardController: null, pendingResult: null, resultMode: null,
   homeLeaderboardController: null, homeLeaderboardMode: 'classic', homeLeaderboardCache: new Map(),
   gameGuideAutoShown: false,
@@ -110,6 +111,7 @@ if (missingIds.length) throw new Error(`页面缺少必要元素：${missingIds.
 
 bindEvents();
 renderConfiguredCopy();
+void loadHardConfig();
 showHome();
 void loadAnnouncements();
 maybeOpenGameGuide();
@@ -320,7 +322,7 @@ function showAnnouncementDetail(item) {
 function bindEvents() {
   els.classicModeButton.addEventListener('click', () => void beginClassic());
   els.freeModeButton.addEventListener('click', () => void beginFreeEntry());
-  els.startButton.addEventListener('click', openHardModal);
+  els.startButton.addEventListener('click', () => void enterHardMode());
   els.homeLeaderboardButton.addEventListener('click', openHomeLeaderboard);
   els.gameGuideButton.addEventListener('click', openGameGuide);
   els.announcementsButton.addEventListener('click', openAnnouncements);
@@ -884,6 +886,40 @@ async function startLocalEngine(mode, catalog, eligible, options = {}) {
       state.launchToken += 1;
       void startLocalEngine(mode, catalog, eligible, options);
     });
+  }
+}
+
+async function loadHardConfig() {
+  if (state.hardConfigPromise) return state.hardConfigPromise;
+  state.hardConfigPromise = (async () => {
+    try {
+      const response = await fetch('/api/hard/config', {
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+      state.hardApiKeyMode = data?.apiKeyMode === 'site' ? 'site' : 'user';
+    } catch {
+      state.hardApiKeyMode = 'user';
+    }
+    return state.hardApiKeyMode;
+  })();
+  return state.hardConfigPromise;
+}
+
+async function enterHardMode() {
+  if (state.hardEntryPending) return;
+  state.hardEntryPending = true;
+  try {
+    const apiKeyMode = await loadHardConfig();
+    if (apiKeyMode === 'site') {
+      void beginHard('');
+      return;
+    }
+    openHardModal();
+  } finally {
+    state.hardEntryPending = false;
   }
 }
 
@@ -1710,7 +1746,7 @@ function replayResultMode() {
     startLocalEngine('free', state.catalog, filterAnime(state.catalog, state.freeFilter), freeEngineOptions());
   } else {
     showHome();
-    openHardModal();
+    void enterHardMode();
   }
 }
 

@@ -16,6 +16,8 @@ const DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions";
 const DEEPSEEK_MODELS_API_URL = "https://api.deepseek.com/v1/models";
 const DEEPSEEK_BALANCE_API_URL = "https://api.deepseek.com/user/balance";
 const DEEPSEEK_TRANS_MODEL = "deepseek-v4-flash";
+const DEEPSEEK_API_KEY_MODES = new Set(["user", "site"]);
+const DEFAULT_DEEPSEEK_API_KEY_MODE = "user";
 
 const MAX_UPSTREAM_JSON_BYTES = 1024 * 1024;
 const USERNAME_MAX_LENGTH = 24;
@@ -95,9 +97,16 @@ export default {
         return json({ sources: await createHardSources(body) });
       }
 
+      if (url.pathname === "/api/hard/config") {
+        requireMethod(request, "GET");
+        return json({
+          apiKeyMode: getDeepSeekApiKeyMode(env),
+        }, 200, { "Cache-Control": "no-store" });
+      }
+
       if (url.pathname === "/api/hard/resolve") {
         requireMethod(request, "POST");
-        const apiKey = getRequestDeepSeekApiKey(request);
+        const apiKey = getEffectiveDeepSeekApiKey(request, env);
         if (!apiKey) throw httpError(400, "请先输入并确认 DeepSeek API Key");
         const body = await readJsonBody(request, 128 * 1024);
         return json({ questions: await resolveHardQuestions(body, apiKey) });
@@ -1528,6 +1537,29 @@ function normalizeDeepSeekApiKey(value) {
 
 function getRequestDeepSeekApiKey(request) {
   return normalizeDeepSeekApiKey(request.headers.get("x-deepseek-api-key"));
+}
+
+function getDeepSeekApiKeyMode(env) {
+  const configured = typeof env?.DEEPSEEK_API_KEY_MODE === "string"
+    ? env.DEEPSEEK_API_KEY_MODE.trim().toLowerCase()
+    : "";
+  return DEEPSEEK_API_KEY_MODES.has(configured)
+    ? configured
+    : DEFAULT_DEEPSEEK_API_KEY_MODE;
+}
+
+function getEffectiveDeepSeekApiKey(request, env) {
+  if (getDeepSeekApiKeyMode(env) === "site") {
+    const apiKey = normalizeDeepSeekApiKey(env?.DEEPSEEK_API_KEY);
+    if (!apiKey) {
+      throw httpError(503, "\u7f51\u7ad9 DeepSeek API Key \u5c1a\u672a\u914d\u7f6e\uff0c\u8bf7\u8054\u7cfb\u7ba1\u7406\u5458");
+    }
+    return apiKey;
+  }
+
+  const apiKey = getRequestDeepSeekApiKey(request);
+  if (!apiKey) throw httpError(400, "\u8bf7\u5148\u8f93\u5165\u5e76\u786e\u8ba4 DeepSeek API Key");
+  return apiKey;
 }
 
 async function validateDeepSeekApiKey(apiKey) {

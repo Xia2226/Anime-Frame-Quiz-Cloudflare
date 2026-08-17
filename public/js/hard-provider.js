@@ -151,7 +151,9 @@ export class HardQuestionProvider {
     const resolved = await postJson("/api/hard/resolve", { entries }, {
       signal: this.abortController.signal,
       timeoutMs: REQUEST_TIMEOUT_MS,
-      headers: { "X-DeepSeek-Api-Key": this.apiKey },
+      headers: this.apiKey
+        ? { "X-DeepSeek-Api-Key": this.apiKey }
+        : {},
     });
     const questions = Array.isArray(resolved?.questions) ? resolved.questions : [];
     const normalizedQuestions = [];

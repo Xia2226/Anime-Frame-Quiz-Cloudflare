@@ -4,6 +4,24 @@
   "main": "worker.mjs",
   "compatibility_date": "2026-08-04",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    // user: visitor-provided key; site: DEEPSEEK_API_KEY Worker Secret
+    "DEEPSEEK_API_KEY_MODE": "site"
+  },
+  "routes": [
+    {
+      "pattern": "animeframequiz.cn",
+      "custom_domain": true,
+      "enabled": true,
+      "previews_enabled": false
+    },
+    {
+      "pattern": "www.animeframequiz.cn",
+      "custom_domain": true,
+      "enabled": true,
+      "previews_enabled": false
+    }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
