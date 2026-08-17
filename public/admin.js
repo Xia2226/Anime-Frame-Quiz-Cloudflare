@@ -111,12 +111,14 @@
 
   const feedbackState = {
     currentType: "",
+    currentStatus: "",
     currentPage: 1,
     total: 0,
   };
   const feedbackEls = {
     refreshButton: document.getElementById("refreshButton"),
     typeFilter: document.getElementById("typeFilter"),
+    statusFilter: document.getElementById("statusFilter"),
     totalLabel: document.getElementById("totalLabel"),
     statusMessage: document.getElementById("statusMessage"),
     listSection: document.getElementById("listSection"),
@@ -150,6 +152,11 @@
       badge.className = `typeBadge ${item.type}`;
       badge.textContent = TYPE_LABELS[item.type] || item.type;
 
+      const statusBadge = document.createElement("span");
+      const isHandled = item.status === "handled";
+      statusBadge.className = `feedbackStatusBadge ${isHandled ? "handled" : "unhandled"}`;
+      statusBadge.textContent = isHandled ? "已处理" : "未处理";
+
       const actions = document.createElement("div");
       actions.className = "feedbackCardActions";
 
@@ -163,7 +170,14 @@
       deleteBtn.textContent = "删除";
       deleteBtn.addEventListener("click", () => void deleteFeedback(item.id));
 
-      actions.append(time, deleteBtn);
+      const handleBtn = document.createElement("button");
+      handleBtn.type = "button";
+      handleBtn.className = "handleBtn";
+      handleBtn.textContent = "处理";
+      handleBtn.addEventListener("click", () => void markFeedbackHandled(item.id));
+      if (isHandled) handleBtn.disabled = true;
+
+      actions.append(statusBadge, time, handleBtn, deleteBtn);
       meta.append(badge, actions);
 
       // 标记类反馈的字段以「|」分隔（入库前经 NFKC 规范化，全角｜会变为半角|）
@@ -207,6 +221,18 @@
     }
   }
 
+  async function markFeedbackHandled(id) {
+    if (!window.confirm(`确定将反馈 ID ${id} 标记为已处理吗？`)) return;
+    showFeedbackStatus("正在更新…", "loading");
+    try {
+      await fetchJson(`/api/admin/feedback?id=${id}&status=handled`, { method: "PATCH" });
+      showFeedbackStatus("已标记为已处理");
+      await loadFeedback();
+    } catch (error) {
+      showFeedbackStatus(error.message || "操作失败", "error");
+    }
+  }
+
   function renderFeedbackPagination() {
     const totalPages = Math.max(1, Math.ceil(feedbackState.total / PAGE_SIZE));
     feedbackEls.prevButton.disabled = feedbackState.currentPage <= 1;
@@ -225,6 +251,7 @@
       offset: String((feedbackState.currentPage - 1) * PAGE_SIZE),
     });
     if (feedbackState.currentType) query.set("type", feedbackState.currentType);
+    if (feedbackState.currentStatus) query.set("status", feedbackState.currentStatus);
     try {
       const data = await fetchJson(`/api/admin/feedback?${query}`);
       feedbackState.total = Number(data?.total) || 0;
@@ -792,36 +819,103 @@
 
   // ---------- 访问统计模块 ----------
 
+  const PLAY_MODE_LABELS = {
+    classic: "经典模式",
+    hard: "困难挑战",
+    free: "自由练习",
+  };
+
+  const analyticsState = {
+    playDate: "",
+  };
+
   const analyticsEls = {
     daysSelect: document.getElementById("anaDaysSelect"),
-    totalPv: document.getElementById("anaTotalPv"),
-    totalUv: document.getElementById("anaTotalUv"),
+    playModeSelect: document.getElementById("anaPlayModeSelect"),
+    playReset: document.getElementById("anaPlayReset"),
+    totalVisitors: document.getElementById("anaTotalVisitors"),
+    totalPlays: document.getElementById("anaTotalPlays"),
     status: document.getElementById("anaStatus"),
     dailyTable: document.getElementById("anaDailyTable"),
+    playLogTable: document.getElementById("anaPlayLogTable"),
+    playLogCount: document.getElementById("anaPlayLogCount"),
+    playsByMode: document.getElementById("anaPlaysByMode"),
   };
 
   function setAnalyticsStatus(message) {
     analyticsEls.status.textContent = message || "";
   }
 
+  function renderPlayLog(items) {
+    const tbody = analyticsEls.playLogTable.querySelector("tbody");
+    clearTableBody(tbody);
+    buildTableRows(tbody, items.map((item) => {
+      const completed = item.completed === true;
+      return [
+        formatTime(item.startedAt),
+        PLAY_MODE_LABELS[item.mode] || item.mode,
+        item.username || "—",
+        completed && item.mode !== "hard" ? String(item.score) : "—",
+        completed ? `${item.correctCount}/${item.questionCount}` : "—",
+        completed ? `${item.accuracy.toFixed(2)}%` : "—",
+        completed ? formatElapsed(item.elapsedMs) : "—",
+        completed ? "已完成" : "未完成",
+      ];
+    }));
+    if (items.length === 0) {
+      addEmptyRow(analyticsEls.playLogTable, 8, "暂无游玩记录");
+    }
+  }
+
+  function applyPlayResetState() {
+    const hasDateFilter = Boolean(analyticsState.playDate);
+    const hasModeFilter = analyticsEls.playModeSelect.value !== "all";
+    analyticsEls.playReset.disabled = !hasDateFilter && !hasModeFilter;
+  }
+
   async function loadAnalytics() {
     const days = analyticsEls.daysSelect.value;
+    const mode = analyticsEls.playModeSelect.value;
+    const params = new URLSearchParams({ days });
+    params.set("mode", mode);
+    if (analyticsState.playDate) params.set("date", analyticsState.playDate);
     setAnalyticsStatus("正在加载…");
     try {
-      const data = await fetchJson(`/api/admin/analytics?days=${encodeURIComponent(days)}`);
-      analyticsEls.totalPv.textContent = String(data.totals?.pv ?? 0);
-      analyticsEls.totalUv.textContent = String(data.totals?.uv ?? 0);
+      const data = await fetchJson(`/api/admin/analytics?${params}`);
+      analyticsEls.totalVisitors.textContent = String(data.totals?.visitors ?? 0);
+      analyticsEls.totalPlays.textContent = String(data.totals?.plays ?? 0);
+      const playsByMode = data.totals?.playsByMode || {};
+      analyticsEls.playsByMode.textContent =
+        `（经典 ${playsByMode.classic ?? 0} · 困难 ${playsByMode.hard ?? 0} · 自由 ${playsByMode.free ?? 0}）`;
 
       const dailyTbody = analyticsEls.dailyTable.querySelector("tbody");
       clearTableBody(dailyTbody);
       buildTableRows(dailyTbody, (data.days || []).map((row) => [
         row.date,
-        String(row.pv),
-        String(row.uv),
+        String(row.visitors),
+        String(row.plays),
       ]));
       if (!data.days || data.days.length === 0) {
         addEmptyRow(analyticsEls.dailyTable, 3, "暂无访问数据");
+      } else {
+        // 高亮当前筛选的日期所在行
+        for (const tr of dailyTbody.querySelectorAll("tr")) {
+          if (tr.cells?.[0]?.textContent === analyticsState.playDate) {
+            tr.classList.add("isActive");
+          }
+        }
       }
+
+      const playLog = data.playLog || {};
+      const playItems = Array.isArray(playLog.items) ? playLog.items : [];
+      renderPlayLog(playItems);
+      const playTotal = Number(playLog.total ?? 0);
+      const limit = Number(playLog.limit ?? 0);
+      const datePrefix = analyticsState.playDate ? `${analyticsState.playDate} · ` : "";
+      analyticsEls.playLogCount.textContent = playTotal > 0
+        ? `${datePrefix}共 ${playTotal} 条游玩记录${limit > 0 && playTotal > limit ? `，仅显示最近 ${limit} 条` : ""}`
+        : analyticsState.playDate ? "该日期暂无游玩记录" : "暂无游玩记录";
+      applyPlayResetState();
       setAnalyticsStatus("");
     } catch (error) {
       setAnalyticsStatus(error.message || "加载失败");
@@ -858,6 +952,11 @@
   feedbackEls.refreshButton.addEventListener("click", () => void loadFeedback());
   feedbackEls.typeFilter.addEventListener("change", () => {
     feedbackState.currentType = feedbackEls.typeFilter.value;
+    feedbackState.currentPage = 1;
+    void loadFeedback();
+  });
+  feedbackEls.statusFilter.addEventListener("change", () => {
+    feedbackState.currentStatus = feedbackEls.statusFilter.value;
     feedbackState.currentPage = 1;
     void loadFeedback();
   });
@@ -943,7 +1042,25 @@
   leaderboardEls.modeFilter.addEventListener("change", () => void loadLeaderboardDetail());
   leaderboardEls.daySelect.addEventListener("change", () => void loadLeaderboardDetail());
 
-  analyticsEls.daysSelect.addEventListener("change", () => void loadAnalytics());
+  analyticsEls.daysSelect.addEventListener("change", () => {
+    // 切换时间范围后清除按日期筛选，避免选中日期落在此范围之外
+    analyticsState.playDate = "";
+    void loadAnalytics();
+  });
+  analyticsEls.playModeSelect.addEventListener("change", () => void loadAnalytics());
+  analyticsEls.playReset.addEventListener("click", () => {
+    analyticsState.playDate = "";
+    analyticsEls.playModeSelect.value = "all";
+    void loadAnalytics();
+  });
+  // 点击每日趋势中的日期，将游玩日志筛选到当天
+  analyticsEls.dailyTable.querySelector("tbody").addEventListener("click", (event) => {
+    const row = event.target.closest("tr");
+    const date = row?.cells?.[0]?.textContent?.trim() || "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    analyticsState.playDate = date;
+    void loadAnalytics();
+  });
 
   // 初始化
   populateDaySelect();

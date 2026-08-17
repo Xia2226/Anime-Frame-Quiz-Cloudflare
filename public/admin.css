@@ -127,6 +127,12 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   font-size: 13px;
   font-weight: 700;
 }
+.toolbarFilters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
 .filterLabel select,
 .filterLabel input[type="date"],
 .filterLabel input[type="search"] {
@@ -204,6 +210,35 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   color: #fff;
 }
 .deleteBtn:disabled { opacity: .5; cursor: not-allowed; }
+.handleBtn {
+  min-height: 26px;
+  padding: 0 12px;
+  border: 1px solid #b8e3c4;
+  border-radius: 999px;
+  background: #f2fbf5;
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .16s ease, border-color .16s ease, color .16s ease;
+}
+.handleBtn:hover:not(:disabled) {
+  background: var(--success);
+  border-color: var(--success);
+  color: #fff;
+}
+.handleBtn:disabled { opacity: .5; cursor: not-allowed; }
+.feedbackStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 750;
+}
+.feedbackStatusBadge.unhandled { background: #fdf3e0; color: #b45309; }
+.feedbackStatusBadge.handled { background: #eaf8ef; color: var(--success); }
 .typeBadge {
   display: inline-flex;
   align-items: center;
@@ -263,6 +298,16 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 }
 .statCard small { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
 .statValue { font-size: clamp(24px, 4vw, 34px); font-weight: 800; color: var(--accent-dark); }
+.statSub { margin: 0; font-size: 12px; color: var(--muted); }
+.statSub b { color: var(--ink); }
+/* 游玩次数卡片：标题与模式分解同一行、基线对齐 */
+.statSubRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+}
+.statSubRow small { margin-top: 0; }
 .anaBlock {
   padding: 18px 20px;
   border: 1px solid var(--line);
@@ -280,6 +325,18 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   margin-bottom: 12px;
 }
 .blockHead .blockTitle { margin: 0; }
+/* 游玩日志头部右侧：模式筛选与条数统计并排放在右边 */
+.playLogMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/* 重置按钮与模式下拉框高度对齐 */
+.playLogMeta .btn {
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+}
 .lbControls {
   display: flex;
   align-items: center;
@@ -528,6 +585,21 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 #lbDetailTable th:nth-child(5) { width: 13%; }
 #lbDetailTable th:nth-child(6) { width: 12%; }
 #lbDetailTable th:nth-child(7) { width: 28%; }
+
+/* 网站游玩日志：时间列加宽保证完整显示，其余列按内容合理分配 */
+#anaPlayLogTable th:nth-child(1) { width: 20%; }
+#anaPlayLogTable th:nth-child(2) { width: 11%; }
+#anaPlayLogTable th:nth-child(3) { width: 18%; }
+#anaPlayLogTable th:nth-child(4) { width: 9%; }
+#anaPlayLogTable th:nth-child(5) { width: 12%; }
+#anaPlayLogTable th:nth-child(6) { width: 10%; }
+#anaPlayLogTable th:nth-child(7) { width: 10%; }
+#anaPlayLogTable th:nth-child(8) { width: 10%; }
+
+/* 每日趋势：日期列可点击筛选当天游玩日志，选中行高亮 */
+#anaDailyTable td:nth-child(1) { cursor: pointer; }
+#anaDailyTable td:nth-child(1):hover { color: var(--accent-dark); text-decoration: underline; }
+.dataTable tbody tr.isActive td { background: rgba(120, 150, 255, .16); }
 
 /* 动漫管理：番剧列放宽展示封面与标题 */
 #animeTable th:nth-child(1) { width: 42%; }

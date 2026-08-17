@@ -32,9 +32,8 @@ const ANNOUNCEMENT_CONTENT_MAX_LENGTH = 2000;
 const ANNOUNCEMENT_DISPLAY_LIMIT = 20;
 const ANIME_LIBRARY_CACHE_SECONDS = 60 * 60;
 const ANIME_LIBRARY_CLIENT_CACHE_CONTROL = "private, no-store, max-age=0, must-revalidate";
-const FEEDBACK_RETENTION_DAYS = 30;
-const ANALYTICS_RETENTION_DAYS = 90;
 const ANALYTICS_PATH_MAX_LENGTH = 200;
+const ANALYTICS_PLAY_LOG_LIMIT = 200;
 const LOCAL_SCORE_POINTS = [...new Set(GAME_CONFIG.scoreThresholds.map((tier) => Number(tier.points)))];
 const LOCAL_MAX_POINTS = Math.max(...LOCAL_SCORE_POINTS);
 const LOCAL_REACHABLE_SCORES = buildReachableScoreSets(
@@ -153,6 +152,11 @@ export default {
         return await handleTrackView(request, env);
       }
 
+      if (url.pathname === "/api/play") {
+        requireMethod(request, "POST");
+        return await handlePlayStart(request, env);
+      }
+
       if (url.pathname === "/api/feedback") {
         requireMethod(request, "POST");
         return await handleFeedbackPost(request, env);
@@ -181,6 +185,9 @@ export default {
       if (url.pathname === "/api/admin/feedback") {
         if (request.method === "DELETE") {
           return await handleAdminFeedbackDelete(url, env);
+        }
+        if (request.method === "PATCH") {
+          return await handleAdminFeedbackStatus(url, env);
         }
         requireMethod(request, "GET");
         return await handleAdminFeedbackList(url, env);
@@ -241,40 +248,6 @@ export default {
         code: error?.code || null,
       }, statusCode);
     }
-  },
-
-  async scheduled(controller, env) {
-    requireLeaderboardDatabase(env);
-    const cutoffDate = new Date(
-      controller.scheduledTime
-        - (GAME_CONFIG.leaderboard.retentionDays - 1) * 24 * 60 * 60 * 1000,
-    );
-    const cutoffDay = getLeaderboardDayKey(cutoffDate);
-    const feedbackCutoffMs = controller.scheduledTime
-      - FEEDBACK_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    const analyticsCutoffMs = controller.scheduledTime
-      - ANALYTICS_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    const [leaderboardResult, feedbackResult, analyticsResult] = await env.DB.batch([
-      env.DB.prepare("DELETE FROM daily_best WHERE day_key < ?").bind(cutoffDay),
-      env.DB.prepare("DELETE FROM feedback WHERE created_at < ?").bind(feedbackCutoffMs),
-      env.DB.prepare("DELETE FROM page_view WHERE created_at < ?").bind(analyticsCutoffMs),
-    ]);
-    console.log(JSON.stringify({
-      level: "info",
-      event: "retention_cleanup",
-      leaderboard: {
-        cutoffDay,
-        rowsDeleted: leaderboardResult.meta?.changes ?? null,
-      },
-      feedback: {
-        cutoffBefore: new Date(feedbackCutoffMs).toISOString(),
-        rowsDeleted: feedbackResult.meta?.changes ?? null,
-      },
-      analytics: {
-        cutoffBefore: new Date(analyticsCutoffMs).toISOString(),
-        rowsDeleted: analyticsResult.meta?.changes ?? null,
-      },
-    }));
   },
 };
 
@@ -469,18 +442,42 @@ async function handleLeaderboardPost(request, url, env) {
   requireLeaderboardDatabase(env);
   const body = await readJsonBody(request, 16 * 1024);
   const submission = normalizeLeaderboardSubmission(mode, body);
+  const playId = parseOptionalPlayId(body?.playId);
   const dayKey = getLeaderboardDayKey();
   const completedAt = Date.now();
-  const upsert = createLeaderboardUpsertStatement(env.DB, dayKey, mode, submission, completedAt);
-  const top = createLeaderboardSelectStatement(env.DB, mode, dayKey);
-  const personal = env.DB.prepare(`
+  // 排行榜仍只保留每人每日最好成绩；所有提交成绩按时间顺序记入 play_log
+  const statements = [createLeaderboardUpsertStatement(env.DB, dayKey, mode, submission, completedAt)];
+  if (playId !== null) {
+    statements.push(env.DB.prepare(`
+      UPDATE play_log
+      SET completed = 1, username = ?, score = ?, correct_count = ?,
+          question_count = ?, accuracy_ppm = ?, elapsed_ms = ?, completed_at = ?
+      WHERE id = ? AND mode = ? AND participant_id = ? AND completed = 0
+    `).bind(
+      submission.username,
+      submission.score,
+      submission.correctCount,
+      submission.questionCount,
+      submission.accuracyPpm,
+      submission.elapsedMs,
+      completedAt,
+      playId,
+      mode,
+      submission.participantId,
+    ));
+  }
+  statements.push(createLeaderboardSelectStatement(env.DB, mode, dayKey));
+  statements.push(env.DB.prepare(`
     SELECT participant_id, username, score, correct_count, question_count,
            accuracy_ppm, elapsed_ms, completed_at
     FROM daily_best
     WHERE day_key = ? AND mode = ? AND participant_id = ?
     LIMIT 1
-  `).bind(dayKey, mode, submission.participantId);
-  const [, topResult, personalResult] = await env.DB.batch([upsert, top, personal]);
+  `).bind(dayKey, mode, submission.participantId));
+  const results = await env.DB.batch(statements);
+  const topIndex = playId !== null ? 2 : 1;
+  const topResult = results[topIndex];
+  const personalResult = results[topIndex + 1];
   const rows = topResult.results || [];
   const entries = formatLeaderboardEntries(rows);
   const personalRow = personalResult.results?.[0] || null;
@@ -510,14 +507,24 @@ async function handleFeedbackPost(request, env) {
 async function handleAdminFeedbackList(url, env) {
   requireLeaderboardDatabase(env);
   const typeFilter = parseAdminFeedbackTypeFilter(url.searchParams.get("type"));
+  const statusFilter = parseAdminFeedbackStatus(url.searchParams.get("status"));
   const limit = parsePageLimit(url.searchParams.get("limit"));
   const offset = parsePageOffset(url.searchParams.get("offset"));
-  const conditions = typeFilter ? "WHERE type = ?" : "";
-  const bindArgs = typeFilter ? [typeFilter] : [];
+  const conditions = [];
+  const bindArgs = [];
+  if (typeFilter) {
+    conditions.push("type = ?");
+    bindArgs.push(typeFilter);
+  }
+  if (statusFilter) {
+    conditions.push("status = ?");
+    bindArgs.push(statusFilter);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const [countResult, listResult] = await env.DB.batch([
-    env.DB.prepare(`SELECT COUNT(*) AS total FROM feedback ${conditions}`).bind(...bindArgs),
+    env.DB.prepare(`SELECT COUNT(*) AS total FROM feedback ${where}`).bind(...bindArgs),
     env.DB.prepare(
-      `SELECT id, type, content, contact, created_at FROM feedback ${conditions}
+      `SELECT id, type, content, contact, created_at, status FROM feedback ${where}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     ).bind(...bindArgs, limit, offset),
   ]);
@@ -527,8 +534,18 @@ async function handleAdminFeedbackList(url, env) {
     content: row.content,
     contact: row.contact,
     createdAt: row.created_at,
+    status: row.status || "unhandled",
   }));
   return json({ total: countResult.results?.[0]?.total ?? 0, limit, offset, items });
+}
+
+async function handleAdminFeedbackStatus(url, env) {
+  requireLeaderboardDatabase(env);
+  const id = parsePositiveId(url.searchParams.get("id"));
+  const status = parseAdminFeedbackStatus(url.searchParams.get("status"), true);
+  const result = await env.DB.prepare("UPDATE feedback SET status = ? WHERE id = ?").bind(status, id).run();
+  if (!(result.meta?.changes > 0)) throw httpError(404, "反馈记录不存在");
+  return json({ ok: true });
 }
 
 async function handleAdminFeedbackDelete(url, env) {
@@ -552,6 +569,18 @@ function parseAdminFeedbackTypeFilter(value) {
     throw httpError(400, "type 必须是 anime_error、bug、feature 或 other");
   }
   return type;
+}
+
+function parseAdminFeedbackStatus(value, required = false) {
+  const status = String(value || "").trim();
+  if (!status) {
+    if (required) throw httpError(400, "status 不能为空");
+    return "";
+  }
+  if (status !== "handled" && status !== "unhandled") {
+    throw httpError(400, "status 必须是 handled 或 unhandled");
+  }
+  return status;
 }
 
 function parsePageLimit(value) {
@@ -938,6 +967,88 @@ async function handleTrackView(request, env) {
   return json({ ok: true });
 }
 
+// 进入游戏记一次游玩（start）；对局结算后回填成绩（complete），
+// 即使排行榜未提交（自由模式/未填用户名）也会按时间顺序保留有效成绩
+async function handlePlayStart(request, env) {
+  requireLeaderboardDatabase(env);
+  const body = await readJsonBody(request, 16 * 1024);
+  const action = String(body?.action || "start");
+  if (action === "start") {
+    const mode = normalizePlayMode(body?.mode);
+    const participantId = normalizePlayParticipantId(body?.participantId, true);
+    const dayKey = getLeaderboardDayKey();
+    const startedAt = Date.now();
+    const result = await env.DB.prepare(
+      "INSERT INTO play_log (day_key, mode, participant_id, started_at) VALUES (?, ?, ?, ?)",
+    ).bind(dayKey, mode, participantId, startedAt).run();
+    return json({ ok: true, id: result.meta?.last_row_id });
+  }
+  if (action === "complete") {
+    const playId = parseOptionalPlayId(body?.id);
+    const mode = normalizePlayMode(body?.mode);
+    const participantId = normalizePlayParticipantId(body?.participantId, true);
+    if (playId === null) throw httpError(400, "id 是必需的游玩记录 id");
+    const questionCount = requireInteger(body?.questionCount, "questionCount", 1, MAX_HARD_QUESTION_COUNT);
+    const correctCount = requireInteger(body?.correctCount, "correctCount", 0, questionCount);
+    const score = requireInteger(body?.score, "score", 0, questionCount * LOCAL_MAX_POINTS);
+    const elapsedMs = requireInteger(body?.elapsedMs, "elapsedMs", 0, MAX_HARD_ELAPSED_MS);
+    const result = await env.DB.prepare(`
+      UPDATE play_log
+      SET completed = 1, username = ?, score = ?, correct_count = ?,
+          question_count = ?, accuracy_ppm = ?, elapsed_ms = ?, completed_at = ?
+      WHERE id = ? AND mode = ? AND participant_id = ? AND completed = 0
+    `).bind(
+      normalizePlayUsername(body?.username),
+      score,
+      correctCount,
+      questionCount,
+      Math.round((correctCount * 1_000_000) / questionCount),
+      elapsedMs,
+      Date.now(),
+      playId,
+      mode,
+      participantId,
+    ).run();
+    return json({ ok: true, updated: (result.meta?.changes ?? 0) > 0 });
+  }
+  throw httpError(400, "action 必须是 start 或 complete");
+}
+
+const PLAY_MODES = new Set(["classic", "hard", "free"]);
+
+function normalizePlayMode(value) {
+  const mode = String(value || "").trim();
+  if (!PLAY_MODES.has(mode)) {
+    throw httpError(400, "mode 必须是 classic、hard 或 free");
+  }
+  return mode;
+}
+
+function normalizePlayParticipantId(value, required = false) {
+  if (value === null || value === undefined || value === "") {
+    if (required) throw httpError(400, "participantId ????? UUID");
+    return "";
+  }
+  const participantId = String(value).trim().toLowerCase();
+  if (!UUID_PATTERN.test(participantId)) {
+    throw httpError(400, "participantId 必须是标准 UUID");
+  }
+  return participantId;
+}
+
+// 完成上报的用户名可选：未填写用户名时记录为空，不阻止成绩入账
+function normalizePlayUsername(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().normalize("NFKC").replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, "").slice(0, USERNAME_MAX_LENGTH);
+}
+
+function parseOptionalPlayId(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) throw httpError(400, "playId 无效");
+  return id;
+}
+
 function hashClientIp(request) {
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   // FNV-1a 32 位哈希：只存哈希值，不保存明文 IP
@@ -997,34 +1108,132 @@ async function handleAdminLeaderboardDetail(url, env) {
 
 async function handleAdminAnalytics(url, env) {
   requireLeaderboardDatabase(env);
-  const days = parseAdminDays(url.searchParams.get("days"), 30, 1, 90);
-  const cutoff = subtractDaysFromDayKey(getLeaderboardDayKey(), days - 1);
-  const [dailyResult, totalResult] = await env.DB.batch([
+  const days = parseAdminDays(url.searchParams.get("days"), 30, 0, 90);
+  const mode = parsePlayModeFilter(url.searchParams.get("mode"));
+  // days = 0 表示全部时间（不设起始日期），其余表示最近 N 天（含当天）
+  const cutoff = days > 0 ? subtractDaysFromDayKey(getLeaderboardDayKey(), days - 1) : "";
+  const viewConditions = cutoff ? "WHERE date >= ?" : "";
+  const playConditions = cutoff ? "WHERE day_key >= ?" : "";
+  const viewBind = cutoff ? [cutoff] : [];
+  const playBind = cutoff ? [cutoff] : [];
+  // 模式/日期筛选仅作用于游玩日志区域（列表与条数），总量指标仍按时间范围全模式统计
+  const dateKey = parseAdminDayKey(url.searchParams.get("date"));
+  const logParts = [
+    dateKey ? "day_key = ?" : (cutoff ? "day_key >= ?" : ""),
+    mode ? "mode = ?" : "",
+  ].filter(Boolean);
+  const logConditions = logParts.length > 0 ? `WHERE ${logParts.join(" AND ")}` : "";
+  const logBind = [
+    ...(dateKey ? [dateKey] : []),
+    ...(!dateKey && cutoff ? [cutoff] : []),
+    ...(mode ? [mode] : []),
+  ];
+  const [dailyViewResult, totalViewResult, dailyPlayResult, totalPlayResult, playsByModeResult, playLogResult, playLogCountResult] = await env.DB.batch([
     env.DB.prepare(`
-      SELECT date, COUNT(*) AS pv, COUNT(DISTINCT ip_hash) AS uv
+      SELECT date, COUNT(DISTINCT ip_hash) AS visitors
       FROM page_view
-      WHERE date >= ?
+      ${viewConditions}
       GROUP BY date
       ORDER BY date ASC
-    `).bind(cutoff),
+    `).bind(...viewBind),
     env.DB.prepare(`
-      SELECT COUNT(*) AS pv, COUNT(DISTINCT ip_hash) AS uv
+      SELECT COUNT(DISTINCT ip_hash) AS visitors
       FROM page_view
-      WHERE date >= ?
-    `).bind(cutoff),
+      ${viewConditions}
+    `).bind(...viewBind),
+    env.DB.prepare(`
+      SELECT day_key, COUNT(*) AS plays
+      FROM play_log
+      ${playConditions}
+      GROUP BY day_key
+      ORDER BY day_key ASC
+    `).bind(...playBind),
+    env.DB.prepare(`
+      SELECT COUNT(*) AS plays
+      FROM play_log
+      ${playConditions}
+    `).bind(...playBind),
+    env.DB.prepare(`
+      SELECT mode, COUNT(*) AS plays
+      FROM play_log
+      ${playConditions}
+      GROUP BY mode
+    `).bind(...playBind),
+    env.DB.prepare(`
+      SELECT id, day_key, mode, participant_id, username, started_at, completed,
+             score, correct_count, question_count, accuracy_ppm, elapsed_ms, completed_at
+      FROM play_log
+      ${logConditions}
+      ORDER BY id DESC
+      LIMIT ?
+    `).bind(...logBind, ANALYTICS_PLAY_LOG_LIMIT),
+    env.DB.prepare(`
+      SELECT COUNT(*) AS plays
+      FROM play_log
+      ${logConditions}
+    `).bind(...logBind),
   ]);
-  const totals = totalResult.results?.[0];
+  const visitorsByDate = new Map(
+    (dailyViewResult.results || []).map((row) => [row.date, Number(row.visitors)]),
+  );
+  const playsByDate = new Map(
+    (dailyPlayResult.results || []).map((row) => [row.day_key, Number(row.plays)]),
+  );
+  const dates = new Set([...visitorsByDate.keys(), ...playsByDate.keys()]);
+  // 最新日期显示在最上方
+  const daysList = [...dates].sort().reverse().map((date) => ({
+    date,
+    visitors: visitorsByDate.get(date) || 0,
+    plays: playsByDate.get(date) || 0,
+  }));
+  const viewTotals = totalViewResult.results?.[0];
+  const playTotals = totalPlayResult.results?.[0];
+  const playTotal = Number(playTotals?.plays) || 0;
+  const playsByMode = { classic: 0, hard: 0, free: 0 };
+  for (const row of playsByModeResult.results || []) {
+    if (Object.prototype.hasOwnProperty.call(playsByMode, row.mode)) {
+      playsByMode[row.mode] = Number(row.plays);
+    }
+  }
   return json({
-    days: (dailyResult.results || []).map((row) => ({
-      date: row.date,
-      pv: Number(row.pv),
-      uv: Number(row.uv),
-    })),
+    days: daysList,
     totals: {
-      pv: Number(totals?.pv) || 0,
-      uv: Number(totals?.uv) || 0,
+      visitors: Number(viewTotals?.visitors) || 0,
+      plays: playTotal,
+      playsByMode,
+    },
+    playLog: {
+      total: Number(playLogCountResult.results?.[0]?.plays) || 0,
+      limit: ANALYTICS_PLAY_LOG_LIMIT,
+      items: (playLogResult.results || []).map(formatPlayLogEntry),
     },
   });
+}
+
+// 游玩日志模式筛选：空值或 all 表示全部模式
+function parsePlayModeFilter(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "all") return null;
+  if (!PLAY_MODES.has(raw)) throw httpError(400, "mode 必须是 classic、hard 或 free");
+  return raw;
+}
+
+function formatPlayLogEntry(row) {
+  return {
+    id: Number(row.id),
+    dayKey: String(row.day_key),
+    mode: String(row.mode),
+    username: String(row.username || ""),
+    startedAt: new Date(Number(row.started_at)).toISOString(),
+    completed: Number(row.completed) === 1,
+    score: Number(row.score),
+    correctCount: Number(row.correct_count),
+    questionCount: Number(row.question_count),
+    accuracyPpm: Number(row.accuracy_ppm),
+    accuracy: Number((Number(row.accuracy_ppm) / 10000).toFixed(2)),
+    elapsedMs: Number(row.elapsed_ms),
+    completedAt: row.completed_at ? new Date(Number(row.completed_at)).toISOString() : null,
+  };
 }
 
 function parseAdminDays(value, fallback, min, max) {
@@ -1032,7 +1241,7 @@ function parseAdminDays(value, fallback, min, max) {
   if (!raw) return fallback;
   const days = Number(raw);
   if (!Number.isInteger(days) || days < min || days > max) {
-    throw httpError(400, `days 必须是 ${min} 到 ${max} 之间的整数`);
+    throw httpError(400, `days 必须是 ${min} 到 ${max} 之间的整数${min === 0 ? "（0 表示全部）" : ""}`);
   }
   return days;
 }

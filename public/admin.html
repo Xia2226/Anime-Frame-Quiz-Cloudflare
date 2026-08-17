@@ -34,16 +34,26 @@
             <button id="refreshButton" class="btn primary" type="button">刷新</button>
           </div>
           <div class="toolbar">
-            <label class="filterLabel" for="typeFilter">
-              反馈类型
-              <select id="typeFilter" data-afq-select>
-                <option value="">全部</option>
-                <option value="anime_error">番剧错误</option>
-                <option value="bug">BUG 反馈</option>
-                <option value="feature">项目功能</option>
-                <option value="other">其他</option>
-              </select>
-            </label>
+            <div class="toolbarFilters">
+              <label class="filterLabel" for="typeFilter">
+                反馈类型
+                <select id="typeFilter" data-afq-select>
+                  <option value="">全部</option>
+                  <option value="anime_error">番剧错误</option>
+                  <option value="bug">BUG 反馈</option>
+                  <option value="feature">项目功能</option>
+                  <option value="other">其他</option>
+                </select>
+              </label>
+              <label class="filterLabel" for="statusFilter">
+                状态
+                <select id="statusFilter" data-afq-select>
+                  <option value="">全部</option>
+                  <option value="unhandled">未处理</option>
+                  <option value="handled">已处理</option>
+                </select>
+              </label>
+            </div>
             <p id="totalLabel" class="totalLabel" role="status"></p>
           </div>
           <p id="statusMessage" class="status" role="status"></p>
@@ -224,20 +234,25 @@
             <label class="filterLabel" for="anaDaysSelect">
               时间范围
               <select id="anaDaysSelect" data-afq-select>
+                <option value="1">当日</option>
                 <option value="7">近 7 天</option>
                 <option value="30" selected>近 30 天</option>
                 <option value="90">近 90 天</option>
+                <option value="0">全部</option>
               </select>
             </label>
           </div>
           <div class="statCards">
             <div class="statCard">
-              <span id="anaTotalPv" class="statValue">-</span>
-              <small>总访问量 PV</small>
+              <span id="anaTotalVisitors" class="statValue">-</span>
+              <small>总访客量</small>
             </div>
             <div class="statCard">
-              <span id="anaTotalUv" class="statValue">-</span>
-              <small>独立访客 UV</small>
+              <span id="anaTotalPlays" class="statValue">-</span>
+              <div class="statSubRow">
+                <small>游玩次数</small>
+                <p id="anaPlaysByMode" class="statSub" role="status">（经典 0 · 困难 0 · 自由 0）</p>
+              </div>
             </div>
           </div>
           <p id="anaStatus" class="totalLabel" role="status"></p>
@@ -248,8 +263,43 @@
                 <thead>
                   <tr>
                     <th>日期</th>
-                    <th>PV</th>
-                    <th>UV</th>
+                    <th>访客量</th>
+                    <th>游玩次数</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="anaBlock">
+            <div class="blockHead">
+              <p class="blockTitle">网站游玩日志</p>
+              <div class="playLogMeta">
+                <label class="filterLabel" for="anaPlayModeSelect">
+                  模式
+                  <select id="anaPlayModeSelect" data-afq-select>
+                    <option value="all" selected>全部</option>
+                    <option value="classic">经典模式</option>
+                    <option value="hard">困难挑战</option>
+                    <option value="free">自由练习</option>
+                  </select>
+                </label>
+                <button type="button" id="anaPlayReset" class="btn" disabled>重置</button>
+                <p id="anaPlayLogCount" class="totalLabel" role="status"></p>
+              </div>
+            </div>
+            <div class="tableWrap">
+              <table class="dataTable" id="anaPlayLogTable">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>模式</th>
+                    <th>用户</th>
+                    <th>得分</th>
+                    <th>答对/题数</th>
+                    <th>正确率</th>
+                    <th>用时</th>
+                    <th>状态</th>
                   </tr>
                 </thead>
                 <tbody></tbody>

@@ -46,7 +46,7 @@ export function saveLeaderboardProfile(username) {
   return { ...memoryProfile };
 }
 
-export async function submitLeaderboardResult(result, signal = undefined) {
+export async function submitLeaderboardResult(result, signal = undefined, playId = null) {
   const profile = readLeaderboardProfile();
   if (!profile.username) return getLeaderboard(result.mode, signal);
   return requestLeaderboard(`?mode=${encodeURIComponent(result.mode)}`, {
@@ -60,6 +60,8 @@ export async function submitLeaderboardResult(result, signal = undefined) {
       correctCount: Math.round(result.correct || 0),
       questionCount: Math.round(result.answered || 0),
       elapsedMs: Math.round(result.elapsedMs || 0),
+      // 关联本次游玩记录：进入游戏时 /api/play 返回的 id
+      playId: playId ?? null,
     }),
   });
 }

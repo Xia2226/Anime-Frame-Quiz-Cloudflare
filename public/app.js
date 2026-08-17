@@ -2,7 +2,7 @@ import { GAME_CONFIG } from './js/game-config.js';
 import { createLocalQuestionProvider, filterAnime, loadCatalog, searchTags } from './js/catalog.js';
 import { HardQuestionProvider, clearExcludedTags } from './js/hard-provider.js';
 import { QuizEngine } from './js/quiz-engine.js';
-import { getLeaderboard, normalizeUsername, readLeaderboardProfile, saveLeaderboardProfile, submitLeaderboardResult } from './js/leaderboard.js';
+import { getLeaderboard, getParticipantId, normalizeUsername, readLeaderboardProfile, saveLeaderboardProfile, submitLeaderboardResult } from './js/leaderboard.js';
 
 const HARD_KEY_STORAGE = 'anime-frame-quiz.deepseek-api-key.v2';
 const GAME_GUIDE_STORAGE = 'anime-frame-quiz.game-guide-seen.v1';
@@ -70,6 +70,7 @@ const state = {
   hardValidationController: null,
   hardApiKeyMode: "user", hardConfigPromise: null, hardEntryPending: false,
   leaderboardController: null, pendingResult: null, resultMode: null,
+  activePlayId: null, playSession: 0, playStartPromise: null,
   homeLeaderboardController: null, homeLeaderboardMode: 'classic', homeLeaderboardCache: new Map(),
   gameGuideAutoShown: false,
   freeFilter: { ...DEFAULT_FREE_FILTER, tags: [] },
@@ -434,6 +435,9 @@ function handleKeyboard(event) {
 
 function showHome() {
   state.launchToken += 1;
+  state.playSession += 1;
+  state.activePlayId = null;
+  state.playStartPromise = null;
   stopGame();
   abortLeaderboard();
   abortHomeLeaderboard();
@@ -471,6 +475,59 @@ function showGameShell(mode) {
   els.progressLabel.textContent = '进度';
   resetQuestionDisplay();
   updateStats(emptySnapshot(mode));
+  // 进入游戏即记录一次游玩（即使未完成对局也计入当天游玩次数）
+  state.playSession += 1;
+  state.activePlayId = null;
+  const playSession = state.playSession;
+  state.playStartPromise = recordPlayStart(mode, playSession);
+}
+
+// 上报本次游玩开始，返回的 play_id 在提交成绩时回填结果
+async function recordPlayStart(mode, playSession) {
+  const payload = JSON.stringify({ mode, participantId: getParticipantId() });
+  try {
+    const response = await fetch('/api/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    });
+    const data = await response.json().catch(() => null);
+    const playId = response.ok && data?.id ? Number(data.id) : null;
+    if (playSession === state.playSession && state.mode === mode) state.activePlayId = playId;
+    return playId;
+  } catch {
+    if (playSession === state.playSession && state.mode === mode) state.activePlayId = null;
+    return null;
+  }
+}
+
+// 对局结算后回填本次游玩成绩；排行榜提交（仅经典/困难且已填用户名）走 /api/leaderboard，
+// 此处兜底自由模式与未填用户名的完成局，保证成绩按时间顺序记录
+async function recordPlayComplete(result, playSession = state.playSession) {
+  const playId = state.activePlayId ?? await state.playStartPromise;
+  if (!playId || playSession !== state.playSession) return false;
+  const payload = JSON.stringify({
+    action: 'complete',
+    id: playId,
+    mode: result.mode,
+    participantId: getParticipantId(),
+    username: readLeaderboardProfile().username || '',
+    score: Math.round(result.score || 0),
+    correctCount: Math.round(result.correct || 0),
+    questionCount: Math.round(result.answered || 0),
+    elapsedMs: Math.round(result.elapsedMs || 0),
+  });
+  try {
+    const response = await fetch('/api/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    });
+    const data = await response.json().catch(() => null);
+    return response.ok && data?.updated === true;
+  } catch {
+    // 完成上报失败不影响结算展示
+  }
 }
 
 function stopGame() {
@@ -1556,6 +1613,7 @@ function skipProfile() {
 }
 
 async function finalizeResult(result, ranked) {
+  const playSession = state.playSession;
   state.pendingResult = null;
   // 一轮困难挑战已结算：清空持久化的版权标签去重记录，让新一轮从头开始去重
   if (result.mode === 'hard') clearExcludedTags();
@@ -1578,6 +1636,11 @@ async function finalizeResult(result, ranked) {
   els.leaderboardSection.classList.toggle('hidden', !ranked);
   openModal(els.resultModal, els.resultReplayButton);
   window.Decor?.burstConfetti?.();
+  // 回填本次游玩成绩（排行榜提交与自由模式共用），不影响排行榜展示
+  if (!ranked) {
+    void recordPlayComplete(result, playSession);
+    return;
+  }
   if (!ranked) return;
 
   abortLeaderboard();
@@ -1587,8 +1650,13 @@ async function finalizeResult(result, ranked) {
   setFormMessage(els.leaderboardStatus, '正在同步今日最佳成绩…', 'loading');
   try {
     const profile = readLeaderboardProfile();
+    if (!profile.username) void recordPlayComplete(result, playSession);
     const data = profile.username
-      ? await submitLeaderboardResult(result, state.leaderboardController.signal)
+      ? await submitLeaderboardResult(
+        result,
+        state.leaderboardController.signal,
+        state.activePlayId ?? await state.playStartPromise,
+      )
       : await getLeaderboard(result.mode, state.leaderboardController.signal);
     renderLeaderboard(data, result.mode);
     const status = profile.username
@@ -1598,6 +1666,8 @@ async function finalizeResult(result, ranked) {
       : '本会话未填写用户名，仅查看榜单。';
     setFormMessage(els.leaderboardStatus, status, 'success');
   } catch (error) {
+    // Preserve the completed play when leaderboard synchronization fails.
+    void recordPlayComplete(result, playSession);
     if (error.name !== 'AbortError') setFormMessage(els.leaderboardStatus, error.message, 'error');
   }
 }

@@ -45,7 +45,7 @@
     }
   ],
   "triggers": {
-    "crons": ["17 16 * * *"]
+    // 排行/反馈/访问数据已改为永久保留，不再需要定时清理任务
   },
   "observability": {
     "enabled": true,
