@@ -402,6 +402,21 @@ function bindEvents() {
       if (state.mode === 'hard') void state.provider?.ensureFilled?.().catch(() => {});
     }
   });
+  // 页面刷新/关闭（卸载）时保底回填未完成对局：sendBeacon 不依赖页面存活，
+  // 对局已结算或已点退出（engine 已销毁）时后端 completed=0 条件不成立，不会重复写入
+  window.addEventListener('pagehide', () => {
+    const playId = state.activePlayId;
+    if (!state.engine || !playId || !state.mode) return;
+    const snapshot = state.engine.snapshot();
+    if (snapshot.answered <= 0) return;
+    sendPlayCompleteBeacon({
+      mode: state.mode,
+      score: snapshot.score,
+      correct: snapshot.correct,
+      answered: snapshot.answered,
+      elapsedMs: snapshot.elapsedMs,
+    }, playId);
+  });
 }
 
 function handleKeyboard(event) {
@@ -514,6 +529,7 @@ async function recordPlayStart(mode, playSession) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payload,
+      keepalive: true,
     });
     const data = await response.json().catch(() => null);
     const playId = response.ok && data?.id ? Number(data.id) : null;
@@ -531,7 +547,23 @@ async function recordPlayComplete(result, playSession = state.playSession, expli
   const playId = explicitPlayId ?? state.activePlayId ?? await state.playStartPromise;
   // 显式传入 playId 时（如中途退出回填）由调用方保证会话归属，跳过全局会话校验
   if (!playId || (explicitPlayId === null && playSession !== state.playSession)) return false;
-  const payload = JSON.stringify({
+  try {
+    const response = await fetch('/api/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: buildPlayCompletePayload(result, playId),
+      keepalive: true,
+    });
+    const data = await response.json().catch(() => null);
+    return response.ok && data?.updated === true;
+  } catch {
+    // 完成上报失败不影响结算展示
+  }
+}
+
+// 构造 /api/play complete 上报体，结算回填与页面卸载保底共用
+function buildPlayCompletePayload(result, playId) {
+  return JSON.stringify({
     action: 'complete',
     id: playId,
     mode: result.mode,
@@ -542,17 +574,25 @@ async function recordPlayComplete(result, playSession = state.playSession, expli
     questionCount: Math.round(result.answered || 0),
     elapsedMs: Math.round(result.elapsedMs || 0),
   });
+}
+
+// 页面刷新/关闭（卸载）时保底回填：sendBeacon 不依赖页面存活，失败则退回 keepalive fetch
+function sendPlayCompleteBeacon(result, playId) {
+  const payload = buildPlayCompletePayload(result, playId);
   try {
-    const response = await fetch('/api/play', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: payload,
-    });
-    const data = await response.json().catch(() => null);
-    return response.ok && data?.updated === true;
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/api/play', new Blob([payload], { type: 'application/json' }));
+      return;
+    }
   } catch {
-    // 完成上报失败不影响结算展示
+    // fall through to keepalive fetch
   }
+  fetch('/api/play', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: payload,
+    keepalive: true,
+  }).catch(() => {});
 }
 
 function stopGame() {
