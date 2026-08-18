@@ -435,6 +435,26 @@ function handleKeyboard(event) {
 
 function showHome() {
   state.launchToken += 1;
+  // 对局未完成即退出时，仍回填本次游玩进度（用户名、成绩、用时等全部字段）；
+  // 等待 start 返回的 play_id 后上报，避免与下一局的会话状态混淆
+  if (state.engine) {
+    const snapshot = state.engine.snapshot();
+    if (snapshot.answered > 0 && state.mode) {
+      const result = {
+        mode: state.mode,
+        score: snapshot.score,
+        correct: snapshot.correct,
+        answered: snapshot.answered,
+        elapsedMs: snapshot.elapsedMs,
+      };
+      const playSession = state.playSession;
+      const playId = state.activePlayId;
+      void (async () => {
+        const resolvedPlayId = playId ?? await state.playStartPromise;
+        if (resolvedPlayId) await recordPlayComplete(result, playSession, resolvedPlayId);
+      })();
+    }
+  }
   state.playSession += 1;
   state.activePlayId = null;
   state.playStartPromise = null;
@@ -507,9 +527,10 @@ async function recordPlayStart(mode, playSession) {
 
 // 对局结算后回填本次游玩成绩；排行榜提交（仅经典/困难且已填用户名）走 /api/leaderboard，
 // 此处兜底自由模式与未填用户名的完成局，保证成绩按时间顺序记录
-async function recordPlayComplete(result, playSession = state.playSession) {
-  const playId = state.activePlayId ?? await state.playStartPromise;
-  if (!playId || playSession !== state.playSession) return false;
+async function recordPlayComplete(result, playSession = state.playSession, explicitPlayId = null) {
+  const playId = explicitPlayId ?? state.activePlayId ?? await state.playStartPromise;
+  // 显式传入 playId 时（如中途退出回填）由调用方保证会话归属，跳过全局会话校验
+  if (!playId || (explicitPlayId === null && playSession !== state.playSession)) return false;
   const payload = JSON.stringify({
     action: 'complete',
     id: playId,
