@@ -415,6 +415,7 @@ function bindEvents() {
       correct: snapshot.correct,
       answered: snapshot.answered,
       elapsedMs: snapshot.elapsedMs,
+      completed: false,
     }, playId);
   });
 }
@@ -461,6 +462,7 @@ function showHome() {
         correct: snapshot.correct,
         answered: snapshot.answered,
         elapsedMs: snapshot.elapsedMs,
+        completed: false,
       };
       const playSession = state.playSession;
       const playId = state.activePlayId;
@@ -573,6 +575,7 @@ function buildPlayCompletePayload(result, playId) {
     correctCount: Math.round(result.correct || 0),
     questionCount: Math.round(result.answered || 0),
     elapsedMs: Math.round(result.elapsedMs || 0),
+    completed: result.completed !== false,
   });
 }
 

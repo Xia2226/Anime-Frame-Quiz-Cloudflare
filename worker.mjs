@@ -972,12 +972,15 @@ async function handlePlayStart(request, env) {
     const correctCount = requireInteger(body?.correctCount, "correctCount", 0, questionCount);
     const score = requireInteger(body?.score, "score", 0, questionCount * LOCAL_MAX_POINTS);
     const elapsedMs = requireInteger(body?.elapsedMs, "elapsedMs", 0, MAX_HARD_ELAPSED_MS);
+    // 中途退出/页面卸载回填时标记为未完成（completed=0），只有答满题目正常结算才算已完成
+    const completed = body?.completed === false ? 0 : 1;
     const result = await env.DB.prepare(`
       UPDATE play_log
-      SET completed = 1, username = ?, score = ?, correct_count = ?,
+      SET completed = ?, username = ?, score = ?, correct_count = ?,
           question_count = ?, accuracy_ppm = ?, elapsed_ms = ?, completed_at = ?
       WHERE id = ? AND mode = ? AND participant_id = ? AND completed = 0
     `).bind(
+      completed,
       normalizePlayUsername(body?.username),
       score,
       correctCount,

@@ -849,9 +849,10 @@
   function renderPlayLog(items) {
     const tbody = analyticsEls.playLogTable.querySelector("tbody");
     clearTableBody(tbody);
-    buildTableRows(tbody, items.map((item) => {
+    for (const item of items) {
       const completed = item.completed === true;
-      return [
+      const tr = document.createElement("tr");
+      const cells = [
         formatTime(item.startedAt),
         PLAY_MODE_LABELS[item.mode] || item.mode,
         item.username || "—",
@@ -859,9 +860,20 @@
         completed ? `${item.correctCount}/${item.questionCount}` : "—",
         completed ? `${item.accuracy.toFixed(2)}%` : "—",
         completed ? formatElapsed(item.elapsedMs) : "—",
-        completed ? "已完成" : "未完成",
       ];
-    }));
+      for (const text of cells) {
+        const td = document.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      }
+      const statusTd = document.createElement("td");
+      const badge = document.createElement("span");
+      badge.className = `playStatus ${completed ? "done" : "pending"}`;
+      badge.textContent = completed ? "已完成" : "未完成";
+      statusTd.appendChild(badge);
+      tr.appendChild(statusTd);
+      tbody.appendChild(tr);
+    }
     if (items.length === 0) {
       addEmptyRow(analyticsEls.playLogTable, 8, "暂无游玩记录");
     }

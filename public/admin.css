@@ -239,6 +239,9 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 }
 .feedbackStatusBadge.unhandled { background: #fdf3e0; color: #b45309; }
 .feedbackStatusBadge.handled { background: #eaf8ef; color: var(--success); }
+.playStatus { font-size: 13px; font-weight: 700; }
+.playStatus.pending { color: #e2555a; } /* 未完成：淡红 */
+.playStatus.done { color: #2e9e5b; }    /* 已完成：淡绿 */
 .typeBadge {
   display: inline-flex;
   align-items: center;
