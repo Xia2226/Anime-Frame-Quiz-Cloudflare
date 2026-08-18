@@ -732,6 +732,9 @@
 
   // ---------- 排行榜模块 ----------
 
+  const LB_PAGE_SIZE = 20;
+  const lbState = { currentPage: 1, total: 0 };
+
   const leaderboardEls = {
     refreshButton: document.getElementById("lbRefreshButton"),
     modeFilter: document.getElementById("lbModeFilter"),
@@ -740,6 +743,9 @@
     daysTable: document.getElementById("lbDaysTable"),
     detailTitle: document.getElementById("lbDetailTitle"),
     detailTable: document.getElementById("lbDetailTable"),
+    prevButton: document.getElementById("lbPrevButton"),
+    pageInfo: document.getElementById("lbPageInfo"),
+    nextButton: document.getElementById("lbNextButton"),
   };
 
   function setLeaderboardStatus(message) {
@@ -782,14 +788,24 @@
     }
   }
 
+  function renderLeaderboardPagination() {
+    const totalPages = Math.max(1, Math.ceil(lbState.total / LB_PAGE_SIZE));
+    leaderboardEls.prevButton.disabled = lbState.currentPage <= 1;
+    leaderboardEls.nextButton.disabled = lbState.currentPage >= totalPages;
+    leaderboardEls.pageInfo.textContent =
+      `第 ${lbState.currentPage} / ${totalPages} 页 · 共 ${lbState.total} 人`;
+  }
+
   async function loadLeaderboardDetail() {
     const mode = leaderboardEls.modeFilter.value;
     const dayKey = leaderboardEls.daySelect.value || getShanghaiDayKey();
     const modeLabel = mode === "classic" ? "经典模式" : "困难挑战";
     const data = await fetchJson(
-      `/api/admin/leaderboard?mode=${encodeURIComponent(mode)}&dayKey=${encodeURIComponent(dayKey)}`,
+      `/api/admin/leaderboard?mode=${encodeURIComponent(mode)}&dayKey=${encodeURIComponent(dayKey)}`
+      + `&limit=${LB_PAGE_SIZE}&offset=${(lbState.currentPage - 1) * LB_PAGE_SIZE}`,
     );
-    leaderboardEls.detailTitle.textContent = `榜单明细 · ${dayKey} · ${modeLabel}（共 ${data.total} 人）`;
+    lbState.total = Number(data.total) || 0;
+    leaderboardEls.detailTitle.textContent = `榜单明细 · ${dayKey} · ${modeLabel}（共 ${lbState.total} 人）`;
     const tbody = leaderboardEls.detailTable.querySelector("tbody");
     clearTableBody(tbody);
     buildTableRows(tbody, (data.entries || []).map((entry) => [
@@ -804,6 +820,7 @@
     if (!data.entries || data.entries.length === 0) {
       addEmptyRow(leaderboardEls.detailTable, 7, "当天暂无榜单记录");
     }
+    renderLeaderboardPagination();
   }
 
   async function loadLeaderboard() {
@@ -825,11 +842,16 @@
     free: "自由练习",
   };
 
+  const PLAY_PAGE_SIZE = 20;
+
   const analyticsState = {
     playDate: "",
+    playPage: 1,
+    playTotal: 0,
   };
 
   const analyticsEls = {
+    refreshButton: document.getElementById("anaRefreshButton"),
     daysSelect: document.getElementById("anaDaysSelect"),
     playModeSelect: document.getElementById("anaPlayModeSelect"),
     playReset: document.getElementById("anaPlayReset"),
@@ -840,6 +862,9 @@
     playLogTable: document.getElementById("anaPlayLogTable"),
     playLogCount: document.getElementById("anaPlayLogCount"),
     playsByMode: document.getElementById("anaPlaysByMode"),
+    playPrevButton: document.getElementById("anaPlayPrevButton"),
+    playPageInfo: document.getElementById("anaPlayPageInfo"),
+    playNextButton: document.getElementById("anaPlayNextButton"),
   };
 
   function setAnalyticsStatus(message) {
@@ -881,6 +906,14 @@
     }
   }
 
+  function renderPlayPagination() {
+    const totalPages = Math.max(1, Math.ceil(analyticsState.playTotal / PLAY_PAGE_SIZE));
+    analyticsEls.playPrevButton.disabled = analyticsState.playPage <= 1;
+    analyticsEls.playNextButton.disabled = analyticsState.playPage >= totalPages;
+    analyticsEls.playPageInfo.textContent =
+      `第 ${analyticsState.playPage} / ${totalPages} 页 · 共 ${analyticsState.playTotal} 条`;
+  }
+
   function applyPlayResetState() {
     const hasDateFilter = Boolean(analyticsState.playDate);
     const hasModeFilter = analyticsEls.playModeSelect.value !== "all";
@@ -893,6 +926,9 @@
     const params = new URLSearchParams({ days });
     params.set("mode", mode);
     if (analyticsState.playDate) params.set("date", analyticsState.playDate);
+    params.set("limit", String(PLAY_PAGE_SIZE));
+    params.set("offset", String((analyticsState.playPage - 1) * PLAY_PAGE_SIZE));
+    analyticsEls.refreshButton.disabled = true;
     setAnalyticsStatus("正在加载…");
     try {
       const data = await fetchJson(`/api/admin/analytics?${params}`);
@@ -923,16 +959,18 @@
       const playLog = data.playLog || {};
       const playItems = Array.isArray(playLog.items) ? playLog.items : [];
       renderPlayLog(playItems);
-      const playTotal = Number(playLog.total ?? 0);
-      const limit = Number(playLog.limit ?? 0);
+      analyticsState.playTotal = Number(playLog.total ?? 0);
       const datePrefix = analyticsState.playDate ? `${analyticsState.playDate} · ` : "";
-      analyticsEls.playLogCount.textContent = playTotal > 0
-        ? `${datePrefix}共 ${playTotal} 条游玩记录${limit > 0 && playTotal > limit ? `，仅显示最近 ${limit} 条` : ""}`
+      analyticsEls.playLogCount.textContent = analyticsState.playTotal > 0
+        ? `${datePrefix}共 ${analyticsState.playTotal} 条游玩记录`
         : analyticsState.playDate ? "该日期暂无游玩记录" : "暂无游玩记录";
+      renderPlayPagination();
       applyPlayResetState();
       setAnalyticsStatus("");
     } catch (error) {
       setAnalyticsStatus(error.message || "加载失败");
+    } finally {
+      analyticsEls.refreshButton.disabled = false;
     }
   }
 
@@ -1053,19 +1091,55 @@
   });
 
   leaderboardEls.refreshButton.addEventListener("click", () => void loadLeaderboard());
-  leaderboardEls.modeFilter.addEventListener("change", () => void loadLeaderboardDetail());
-  leaderboardEls.daySelect.addEventListener("change", () => void loadLeaderboardDetail());
+  leaderboardEls.modeFilter.addEventListener("change", () => {
+    lbState.currentPage = 1;
+    void loadLeaderboardDetail();
+  });
+  leaderboardEls.daySelect.addEventListener("change", () => {
+    lbState.currentPage = 1;
+    void loadLeaderboardDetail();
+  });
+  leaderboardEls.prevButton.addEventListener("click", () => {
+    if (lbState.currentPage > 1) {
+      lbState.currentPage -= 1;
+      void loadLeaderboardDetail();
+    }
+  });
+  leaderboardEls.nextButton.addEventListener("click", () => {
+    if (lbState.currentPage < Math.ceil(lbState.total / LB_PAGE_SIZE)) {
+      lbState.currentPage += 1;
+      void loadLeaderboardDetail();
+    }
+  });
 
+  analyticsEls.refreshButton.addEventListener("click", () => void loadAnalytics());
   analyticsEls.daysSelect.addEventListener("change", () => {
     // 切换时间范围后清除按日期筛选，避免选中日期落在此范围之外
     analyticsState.playDate = "";
+    analyticsState.playPage = 1;
     void loadAnalytics();
   });
-  analyticsEls.playModeSelect.addEventListener("change", () => void loadAnalytics());
+  analyticsEls.playModeSelect.addEventListener("change", () => {
+    analyticsState.playPage = 1;
+    void loadAnalytics();
+  });
   analyticsEls.playReset.addEventListener("click", () => {
     analyticsState.playDate = "";
+    analyticsState.playPage = 1;
     analyticsEls.playModeSelect.value = "all";
     void loadAnalytics();
+  });
+  analyticsEls.playPrevButton.addEventListener("click", () => {
+    if (analyticsState.playPage > 1) {
+      analyticsState.playPage -= 1;
+      void loadAnalytics();
+    }
+  });
+  analyticsEls.playNextButton.addEventListener("click", () => {
+    if (analyticsState.playPage < Math.ceil(analyticsState.playTotal / PLAY_PAGE_SIZE)) {
+      analyticsState.playPage += 1;
+      void loadAnalytics();
+    }
   });
   // 点击每日趋势中的日期，将游玩日志筛选到当天
   analyticsEls.dailyTable.querySelector("tbody").addEventListener("click", (event) => {
@@ -1073,6 +1147,7 @@
     const date = row?.cells?.[0]?.textContent?.trim() || "";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
     analyticsState.playDate = date;
+    analyticsState.playPage = 1;
     void loadAnalytics();
   });
 

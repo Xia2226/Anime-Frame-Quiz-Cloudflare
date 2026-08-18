@@ -168,6 +168,11 @@
               </table>
             </div>
           </div>
+          <footer class="pagination">
+            <button id="lbPrevButton" class="btn" type="button">上一页</button>
+            <span id="lbPageInfo" class="pageInfo"></span>
+            <button id="lbNextButton" class="btn" type="button">下一页</button>
+          </footer>
           <div class="anaBlock">
             <p class="blockTitle">近 14 天提交概览</p>
             <div class="tableWrap">
@@ -231,16 +236,19 @@
         <section id="module-analytics" class="modulePanel hidden">
           <div class="moduleHead">
             <h2>访问统计</h2>
-            <label class="filterLabel" for="anaDaysSelect">
-              时间范围
-              <select id="anaDaysSelect" data-afq-select>
-                <option value="1">当日</option>
-                <option value="7" selected>近 7 天</option>
-                <option value="30">近 30 天</option>
-                <option value="90">近 90 天</option>
-                <option value="0">全部</option>
-              </select>
-            </label>
+            <div class="moduleHeadActions">
+              <label class="filterLabel" for="anaDaysSelect">
+                时间范围
+                <select id="anaDaysSelect" data-afq-select>
+                  <option value="1">当日</option>
+                  <option value="7" selected>近 7 天</option>
+                  <option value="30">近 30 天</option>
+                  <option value="90">近 90 天</option>
+                  <option value="0">全部</option>
+                </select>
+              </label>
+              <button id="anaRefreshButton" class="btn primary" type="button">刷新</button>
+            </div>
           </div>
           <div class="statCards">
             <div class="statCard">
@@ -306,6 +314,11 @@
               </table>
             </div>
           </div>
+          <footer class="pagination">
+            <button id="anaPlayPrevButton" class="btn" type="button">上一页</button>
+            <span id="anaPlayPageInfo" class="pageInfo"></span>
+            <button id="anaPlayNextButton" class="btn" type="button">下一页</button>
+          </footer>
         </section>
       </main>
     </div>

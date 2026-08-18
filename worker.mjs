@@ -32,7 +32,6 @@ const ANNOUNCEMENT_CONTENT_MAX_LENGTH = 2000;
 const ANNOUNCEMENT_DISPLAY_LIMIT = 20;
 const ANIME_LIBRARY_CACHE_SECONDS = 60 * 60;
 const ANIME_LIBRARY_CLIENT_CACHE_CONTROL = "private, no-store, max-age=0, must-revalidate";
-const ANALYTICS_PLAY_LOG_LIMIT = 200;
 const LOCAL_SCORE_POINTS = [...new Set(GAME_CONFIG.scoreThresholds.map((tier) => Number(tier.points)))];
 const LOCAL_MAX_POINTS = Math.max(...LOCAL_SCORE_POINTS);
 const LOCAL_REACHABLE_SCORES = buildReachableScoreSets(
@@ -1068,14 +1067,16 @@ async function handleAdminLeaderboardDetail(url, env) {
   requireLeaderboardDatabase(env);
   const mode = normalizeLeaderboardMode(url.searchParams.get("mode"));
   const dayKey = parseAdminDayKey(url.searchParams.get("dayKey")) || getLeaderboardDayKey();
+  const limit = parsePageLimit(url.searchParams.get("limit"));
+  const offset = parsePageOffset(url.searchParams.get("offset"));
   const [countResult, listResult] = await env.DB.batch([
     env.DB.prepare(
       "SELECT COUNT(*) AS total FROM daily_best WHERE day_key = ? AND mode = ?",
     ).bind(dayKey, mode),
-    createLeaderboardSelectStatement(env.DB, mode, dayKey),
+    createLeaderboardSelectStatement(env.DB, mode, dayKey, limit, offset),
   ]);
-  const entries = formatLeaderboardEntries(listResult.results || []);
-  return json({ dayKey, mode, total: countResult.results?.[0]?.total ?? 0, entries });
+  const entries = formatLeaderboardEntries(listResult.results || [], offset);
+  return json({ dayKey, mode, total: countResult.results?.[0]?.total ?? 0, limit, offset, entries });
 }
 
 async function handleAdminAnalytics(url, env) {
@@ -1098,6 +1099,9 @@ async function handleAdminAnalytics(url, env) {
     ...(!dateKey && cutoff ? [cutoff] : []),
     ...(mode ? [mode] : []),
   ];
+  // 游玩日志分页：翻页可查看全部记录，不再受固定条数限制
+  const playLimit = parsePageLimit(url.searchParams.get("limit"));
+  const playOffset = parsePageOffset(url.searchParams.get("offset"));
   // 访客统计口径：以 play_log 的去重参与人数为准（点击三类模式进入游戏才算一次访问），
   // 爬虫不会进入游戏，天然不受爬虫影响；participant_id 为每浏览器独立 UUID，不受 NAT 影响
   const [dailyPlayResult, totalPlayResult, playsByModeResult, playLogResult, playLogCountResult] = await env.DB.batch([
@@ -1125,8 +1129,8 @@ async function handleAdminAnalytics(url, env) {
       FROM play_log
       ${logConditions}
       ORDER BY id DESC
-      LIMIT ?
-    `).bind(...logBind, ANALYTICS_PLAY_LOG_LIMIT),
+      LIMIT ? OFFSET ?
+    `).bind(...logBind, playLimit, playOffset),
     env.DB.prepare(`
       SELECT COUNT(*) AS plays
       FROM play_log
@@ -1159,7 +1163,8 @@ async function handleAdminAnalytics(url, env) {
     },
     playLog: {
       total: Number(playLogCountResult.results?.[0]?.plays) || 0,
-      limit: ANALYTICS_PLAY_LOG_LIMIT,
+      limit: playLimit,
+      offset: playOffset,
       items: (playLogResult.results || []).map(formatPlayLogEntry),
     },
   });
@@ -1389,21 +1394,26 @@ function createLeaderboardUpsertStatement(db, dayKey, mode, value, completedAt) 
   );
 }
 
-function createLeaderboardSelectStatement(db, mode, dayKey) {
+function createLeaderboardSelectStatement(db, mode, dayKey, limit = null, offset = null) {
   const orderBy = mode === "hard"
     ? "accuracy_ppm DESC, question_count DESC, elapsed_ms ASC, completed_at ASC"
     : "score DESC, elapsed_ms ASC, completed_at ASC";
-  return db.prepare(`
+  // limit/offset 用于后台管理明细分页；未传时保持调用方原有的全量行为
+  const statement = db.prepare(`
     SELECT participant_id, username, score, correct_count, question_count,
            accuracy_ppm, elapsed_ms, completed_at
     FROM daily_best
     WHERE day_key = ? AND mode = ?
     ORDER BY ${orderBy}
-  `).bind(dayKey, mode);
+    ${limit === null ? "" : "LIMIT ? OFFSET ?"}
+  `);
+  return limit === null
+    ? statement.bind(dayKey, mode)
+    : statement.bind(dayKey, mode, limit, offset);
 }
 
-function formatLeaderboardEntries(rows) {
-  return rows.map((row, index) => formatLeaderboardEntry(row, index + 1));
+function formatLeaderboardEntries(rows, startIndex = 0) {
+  return rows.map((row, index) => formatLeaderboardEntry(row, startIndex + index + 1));
 }
 
 function formatLeaderboardEntry(row, rank) {

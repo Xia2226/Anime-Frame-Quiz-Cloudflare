@@ -91,6 +91,12 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   gap: 12px;
 }
 .moduleHead h2 { margin: 0; font-size: 19px; font-weight: 800; }
+/* 模块标题行右侧操作区：筛选与刷新按钮同一行并排 */
+.moduleHeadActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .btn {
   min-height: 38px;
   padding: 0 16px;
