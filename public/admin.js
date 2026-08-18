@@ -851,15 +851,17 @@
     clearTableBody(tbody);
     for (const item of items) {
       const completed = item.completed === true;
+      // 未完成但对局有进度时同样回填了成绩，仅完全未答题才显示占位符
+      const hasResult = item.questionCount > 0;
       const tr = document.createElement("tr");
       const cells = [
         formatTime(item.startedAt),
         PLAY_MODE_LABELS[item.mode] || item.mode,
         item.username || "—",
-        completed && item.mode !== "hard" ? String(item.score) : "—",
-        completed ? `${item.correctCount}/${item.questionCount}` : "—",
-        completed ? `${item.accuracy.toFixed(2)}%` : "—",
-        completed ? formatElapsed(item.elapsedMs) : "—",
+        hasResult && item.mode !== "hard" ? String(item.score) : "—",
+        hasResult ? `${item.correctCount}/${item.questionCount}` : "—",
+        hasResult ? `${item.accuracy.toFixed(2)}%` : "—",
+        hasResult ? formatElapsed(item.elapsedMs) : "—",
       ];
       for (const text of cells) {
         const td = document.createElement("td");
