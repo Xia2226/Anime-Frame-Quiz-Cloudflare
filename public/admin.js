@@ -111,7 +111,7 @@
 
   const feedbackState = {
     currentType: "",
-    currentStatus: "",
+    currentStatus: "unhandled",
     currentPage: 1,
     total: 0,
   };
