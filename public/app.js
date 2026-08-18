@@ -484,7 +484,11 @@ function showGameShell(mode) {
 
 // 上报本次游玩开始，返回的 play_id 在提交成绩时回填结果
 async function recordPlayStart(mode, playSession) {
-  const payload = JSON.stringify({ mode, participantId: getParticipantId() });
+  const payload = JSON.stringify({
+    mode,
+    participantId: getParticipantId(),
+    username: readLeaderboardProfile().username || '',
+  });
   try {
     const response = await fetch('/api/play', {
       method: 'POST',

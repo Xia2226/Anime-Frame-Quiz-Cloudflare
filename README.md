@@ -197,10 +197,10 @@ https://github.com/Xia2226/AnimeShotDB-tools
 | 困难挑战 | `/api/hard/sources`、`/api/hard/resolve` | `POST` | 获取候选题源并按当前配置的 Key 来源批量解析题目。 |
 | 困难挑战 | `/api/hard/video-proxy` | `GET` | 安全代理 Sakugabooru 视频，支持 Range 请求。 |
 | 对局 | `/api/leaderboard?mode=classic或hard` | `GET` / `POST` | 读取或提交当日排行榜。 |
-| 站点 | `/api/feedback`、`/api/track` | `POST` | 提交反馈与匿名页面访问统计。 |
+| 站点 | `/api/feedback` | `POST` | 提交反馈。 |
 | 站点 | `/api/announcements` | `GET` | 读取已上架公告。 |
 | 题库 | `/data/anime-library.json` | `GET` | 返回叠加 D1 番剧启停状态后的当前题库。 |
-| 后台 | `/api/admin/leaderboard/*`、`/api/admin/analytics` | `GET` | 查询榜单日期、榜单详情和 PV / UV。 |
+| 后台 | `/api/admin/leaderboard/*`、`/api/admin/analytics` | `GET` | 查询榜单日期、榜单详情和访问统计（访客量/游玩次数，以 play_log 去重参与人数为准）。 |
 | 后台 | `/api/admin/feedback` | `GET` / `DELETE` | 查询或删除反馈。 |
 | 后台 | `/api/admin/anime` | `GET` / `PUT` | 查询与启停番剧。 |
 | 后台 | `/api/admin/announcements` | `GET` / `POST` / `PUT` / `DELETE` | 管理公告。 |

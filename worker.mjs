@@ -32,7 +32,6 @@ const ANNOUNCEMENT_CONTENT_MAX_LENGTH = 2000;
 const ANNOUNCEMENT_DISPLAY_LIMIT = 20;
 const ANIME_LIBRARY_CACHE_SECONDS = 60 * 60;
 const ANIME_LIBRARY_CLIENT_CACHE_CONTROL = "private, no-store, max-age=0, must-revalidate";
-const ANALYTICS_PATH_MAX_LENGTH = 200;
 const ANALYTICS_PLAY_LOG_LIMIT = 200;
 const LOCAL_SCORE_POINTS = [...new Set(GAME_CONFIG.scoreThresholds.map((tier) => Number(tier.points)))];
 const LOCAL_MAX_POINTS = Math.max(...LOCAL_SCORE_POINTS);
@@ -145,11 +144,6 @@ export default {
           return json({ valid: false, message: "请先输入 DeepSeek API Key" }, 400);
         }
         return json(await validateDeepSeekApiKey(apiKey));
-      }
-
-      if (url.pathname === "/api/track") {
-        requireMethod(request, "POST");
-        return await handleTrackView(request, env);
       }
 
       if (url.pathname === "/api/play") {
@@ -952,21 +946,6 @@ async function loadAnimeOverrideVersionSafely(db) {
   }
 }
 
-async function handleTrackView(request, env) {
-  requireLeaderboardDatabase(env);
-  const body = await readJsonBody(request, 4 * 1024);
-  const rawPath = body?.path;
-  const path = typeof rawPath === "string" && rawPath.startsWith("/")
-    ? rawPath.slice(0, ANALYTICS_PATH_MAX_LENGTH)
-    : "/";
-  const dayKey = getLeaderboardDayKey();
-  const ipHash = hashClientIp(request);
-  await env.DB.prepare(
-    "INSERT INTO page_view (date, path, ip_hash, created_at) VALUES (?, ?, ?, ?)",
-  ).bind(dayKey, path, ipHash, Date.now()).run();
-  return json({ ok: true });
-}
-
 // 进入游戏记一次游玩（start）；对局结算后回填成绩（complete），
 // 即使排行榜未提交（自由模式/未填用户名）也会按时间顺序保留有效成绩
 async function handlePlayStart(request, env) {
@@ -976,11 +955,12 @@ async function handlePlayStart(request, env) {
   if (action === "start") {
     const mode = normalizePlayMode(body?.mode);
     const participantId = normalizePlayParticipantId(body?.participantId, true);
+    const username = normalizePlayUsername(body?.username);
     const dayKey = getLeaderboardDayKey();
     const startedAt = Date.now();
     const result = await env.DB.prepare(
-      "INSERT INTO play_log (day_key, mode, participant_id, started_at) VALUES (?, ?, ?, ?)",
-    ).bind(dayKey, mode, participantId, startedAt).run();
+      "INSERT INTO play_log (day_key, mode, participant_id, username, started_at) VALUES (?, ?, ?, ?, ?)",
+    ).bind(dayKey, mode, participantId, username, startedAt).run();
     return json({ ok: true, id: result.meta?.last_row_id });
   }
   if (action === "complete") {
@@ -1049,17 +1029,6 @@ function parseOptionalPlayId(value) {
   return id;
 }
 
-function hashClientIp(request) {
-  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-  // FNV-1a 32 位哈希：只存哈希值，不保存明文 IP
-  let hash = 2166136261;
-  for (let index = 0; index < ip.length; index += 1) {
-    hash ^= ip.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
 async function handleAdminLeaderboardDays(url, env) {
   requireLeaderboardDatabase(env);
   const days = parseAdminDays(url.searchParams.get("days"), 14, 1, 90);
@@ -1112,9 +1081,7 @@ async function handleAdminAnalytics(url, env) {
   const mode = parsePlayModeFilter(url.searchParams.get("mode"));
   // days = 0 表示全部时间（不设起始日期），其余表示最近 N 天（含当天）
   const cutoff = days > 0 ? subtractDaysFromDayKey(getLeaderboardDayKey(), days - 1) : "";
-  const viewConditions = cutoff ? "WHERE date >= ?" : "";
   const playConditions = cutoff ? "WHERE day_key >= ?" : "";
-  const viewBind = cutoff ? [cutoff] : [];
   const playBind = cutoff ? [cutoff] : [];
   // 模式/日期筛选仅作用于游玩日志区域（列表与条数），总量指标仍按时间范围全模式统计
   const dateKey = parseAdminDayKey(url.searchParams.get("date"));
@@ -1128,28 +1095,18 @@ async function handleAdminAnalytics(url, env) {
     ...(!dateKey && cutoff ? [cutoff] : []),
     ...(mode ? [mode] : []),
   ];
-  const [dailyViewResult, totalViewResult, dailyPlayResult, totalPlayResult, playsByModeResult, playLogResult, playLogCountResult] = await env.DB.batch([
+  // 访客统计口径：以 play_log 的去重参与人数为准（点击三类模式进入游戏才算一次访问），
+  // 爬虫不会进入游戏，天然不受爬虫影响；participant_id 为每浏览器独立 UUID，不受 NAT 影响
+  const [dailyPlayResult, totalPlayResult, playsByModeResult, playLogResult, playLogCountResult] = await env.DB.batch([
     env.DB.prepare(`
-      SELECT date, COUNT(DISTINCT ip_hash) AS visitors
-      FROM page_view
-      ${viewConditions}
-      GROUP BY date
-      ORDER BY date ASC
-    `).bind(...viewBind),
-    env.DB.prepare(`
-      SELECT COUNT(DISTINCT ip_hash) AS visitors
-      FROM page_view
-      ${viewConditions}
-    `).bind(...viewBind),
-    env.DB.prepare(`
-      SELECT day_key, COUNT(*) AS plays
+      SELECT day_key, COUNT(*) AS plays, COUNT(DISTINCT participant_id) AS visitors
       FROM play_log
       ${playConditions}
       GROUP BY day_key
       ORDER BY day_key ASC
     `).bind(...playBind),
     env.DB.prepare(`
-      SELECT COUNT(*) AS plays
+      SELECT COUNT(*) AS plays, COUNT(DISTINCT participant_id) AS visitors
       FROM play_log
       ${playConditions}
     `).bind(...playBind),
@@ -1173,22 +1130,17 @@ async function handleAdminAnalytics(url, env) {
       ${logConditions}
     `).bind(...logBind),
   ]);
-  const visitorsByDate = new Map(
-    (dailyViewResult.results || []).map((row) => [row.date, Number(row.visitors)]),
-  );
-  const playsByDate = new Map(
-    (dailyPlayResult.results || []).map((row) => [row.day_key, Number(row.plays)]),
-  );
-  const dates = new Set([...visitorsByDate.keys(), ...playsByDate.keys()]);
   // 最新日期显示在最上方
-  const daysList = [...dates].sort().reverse().map((date) => ({
-    date,
-    visitors: visitorsByDate.get(date) || 0,
-    plays: playsByDate.get(date) || 0,
-  }));
-  const viewTotals = totalViewResult.results?.[0];
+  const daysList = (dailyPlayResult.results || [])
+    .map((row) => ({
+      date: row.day_key,
+      plays: Number(row.plays),
+      visitors: Number(row.visitors),
+    }))
+    .reverse();
   const playTotals = totalPlayResult.results?.[0];
   const playTotal = Number(playTotals?.plays) || 0;
+  const visitorTotal = Number(playTotals?.visitors) || 0;
   const playsByMode = { classic: 0, hard: 0, free: 0 };
   for (const row of playsByModeResult.results || []) {
     if (Object.prototype.hasOwnProperty.call(playsByMode, row.mode)) {
@@ -1198,7 +1150,7 @@ async function handleAdminAnalytics(url, env) {
   return json({
     days: daysList,
     totals: {
-      visitors: Number(viewTotals?.visitors) || 0,
+      visitors: visitorTotal,
       plays: playTotal,
       playsByMode,
     },
