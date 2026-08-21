@@ -467,9 +467,20 @@
     >
       <section class="modalDialog homeLeaderboardDialog">
         <header class="modalHeader">
-          <div>
-            <p class="eyebrow">Daily Leaderboard</p>
-            <h2 id="homeLeaderboardTitle">今日排行榜</h2>
+          <div class="homeLeaderboardHeading">
+            <div>
+              <p class="eyebrow">Daily Leaderboard</p>
+              <h2 id="homeLeaderboardTitle">今日排行榜</h2>
+            </div>
+            <select
+              id="homeLeaderboardRange"
+              aria-label="排行榜时间范围"
+              data-afq-select
+            >
+              <option value="today" selected>今日</option>
+              <option value="7d">近7天</option>
+              <option value="30d">近30天</option>
+            </select>
           </div>
           <button
             id="homeLeaderboardCloseButton"

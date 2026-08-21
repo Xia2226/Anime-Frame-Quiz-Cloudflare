@@ -24,6 +24,7 @@ const USERNAME_MAX_LENGTH = 24;
 const MAX_HARD_QUESTION_COUNT = 10000;
 const MAX_HARD_ELAPSED_MS = 7 * 24 * 60 * 60 * 1000;
 const LEADERBOARD_MODES = new Set(["classic", "hard"]);
+const LEADERBOARD_RANGES = new Set(["today", "7d", "30d"]);
 const FEEDBACK_TYPES = new Set(["anime_error", "bug", "feature", "other"]);
 const FEEDBACK_CONTENT_MAX_LENGTH = 2000;
 const FEEDBACK_CONTACT_MAX_LENGTH = 128;
@@ -412,18 +413,23 @@ function parseJsonArrayFromModel(content) {
 
 async function handleLeaderboardGet(request, url, env, context) {
   const mode = normalizeLeaderboardMode(url.searchParams.get("mode"));
-  const dayKey = getLeaderboardDayKey();
+  const range = normalizeLeaderboardRange(url.searchParams.get("range"));
   requireLeaderboardDatabase(env);
+  const todayKey = getLeaderboardDayKey();
+  const startDayKey = range === "today" ? todayKey : subtractDaysFromDayKey(todayKey, range === "7d" ? 6 : 29);
   const cacheUrl = new URL("/api/leaderboard", request.url);
   cacheUrl.searchParams.set("mode", mode);
-  cacheUrl.searchParams.set("dayKey", dayKey);
+  cacheUrl.searchParams.set("range", range);
+  cacheUrl.searchParams.set("dayKey", `${startDayKey}_${todayKey}`);
   const cacheRequest = new Request(cacheUrl, { method: "GET" });
   const cached = await caches.default.match(cacheRequest);
   if (cached) return cached;
 
-  const queryResult = await createLeaderboardSelectStatement(env.DB, mode, dayKey).all();
+  const queryResult = range === "today"
+    ? await createLeaderboardSelectStatement(env.DB, mode, todayKey).all()
+    : await queryLeaderboardRange(env.DB, mode, startDayKey, todayKey);
   const entries = formatLeaderboardEntries(queryResult.results || []);
-  const response = json({ dayKey, mode, entries }, 200, {
+  const response = json({ dayKey: todayKey, startDayKey, range, mode, entries }, 200, {
     "Cache-Control": `public, max-age=${GAME_CONFIG.leaderboard.cacheSeconds}`,
   });
   putCacheInBackground(context, cacheRequest, response, "leaderboard");
@@ -1269,6 +1275,14 @@ function normalizeLeaderboardMode(value) {
   return mode;
 }
 
+function normalizeLeaderboardRange(value) {
+  const range = String(value || "today").trim();
+  if (!LEADERBOARD_RANGES.has(range)) {
+    throw httpError(400, "range 必须是 today、7d 或 30d");
+  }
+  return range;
+}
+
 function normalizeLeaderboardSubmission(mode, body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw httpError(400, "请求体必须是对象");
@@ -1410,6 +1424,28 @@ function createLeaderboardSelectStatement(db, mode, dayKey, limit = null, offset
   return limit === null
     ? statement.bind(dayKey, mode)
     : statement.bind(dayKey, mode, limit, offset);
+}
+
+async function queryLeaderboardRange(db, mode, startDayKey, endDayKey) {
+  const orderBy = mode === "hard"
+    ? "accuracy_ppm DESC, question_count DESC, elapsed_ms ASC, completed_at ASC"
+    : "score DESC, elapsed_ms ASC, completed_at ASC";
+  const result = await db.prepare(`
+    SELECT participant_id, username, score, correct_count, question_count,
+           accuracy_ppm, elapsed_ms, completed_at
+    FROM daily_best
+    WHERE mode = ? AND day_key >= ? AND day_key <= ?
+    ORDER BY ${orderBy}
+  `).bind(mode, startDayKey, endDayKey).all();
+  // 区间榜单：同一参与者在范围内可能有多天记录，只保留其最优的一条
+  const seen = new Set();
+  return {
+    results: (result.results || []).filter((row) => {
+      if (seen.has(row.participant_id)) return false;
+      seen.add(row.participant_id);
+      return true;
+    }),
+  };
 }
 
 function formatLeaderboardEntries(rows, startIndex = 0) {

@@ -687,6 +687,30 @@ button:disabled { opacity: .52; cursor: not-allowed; transform: none !important;
   font-size: 24px;
   cursor: pointer;
 }
+/* 首页排行榜：标题 + 时间范围下拉框 */
+.homeLeaderboardHeading {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  min-width: 0;
+}
+.homeLeaderboardHeading .afq-select {
+  width: auto;
+  flex: 0 0 auto;
+}
+.homeLeaderboardHeading .afq-select__trigger {
+  width: auto;
+  min-width: 108px;
+  height: 36px;
+  padding: 0 12px;
+  border-color: #b8c5da;
+  color: var(--ink, #182033);
+  font-weight: 600;
+}
+.homeLeaderboardHeading .afq-select__trigger:hover {
+  border-color: #93a4c0;
+}
 .modalLead { margin: 0 0 22px; color: var(--muted); font-size: 15px; line-height: 1.7; }
 .stackForm { display: grid; gap: 11px; }
 .stackForm label, .filterForm label {

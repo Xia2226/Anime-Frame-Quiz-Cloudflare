@@ -37,6 +37,12 @@ const DEBUG = {
   freeFastFinishEnabled: false,
   hardFastFinishEnabled: false,
 };
+// 首页排行榜的时间范围选项（key 与后端 range 参数一致）
+const HOME_LEADERBOARD_RANGES = Object.freeze({
+  today: '今日',
+  '7d': '近7天',
+  '30d': '近30天',
+});
 const FEEDBACK_TYPE_META = Object.freeze({
   anime_error: Object.freeze({
     label: '番剧错误',
@@ -71,7 +77,8 @@ const state = {
   hardApiKeyMode: "user", hardConfigPromise: null, hardEntryPending: false,
   leaderboardController: null, pendingResult: null, resultMode: null,
   activePlayId: null, playSession: 0, playStartPromise: null,
-  homeLeaderboardController: null, homeLeaderboardMode: 'classic', homeLeaderboardCache: new Map(),
+  homeLeaderboardController: null, homeLeaderboardMode: 'classic', homeLeaderboardRange: 'today',
+  homeLeaderboardCache: new Map(),
   gameGuideAutoShown: false,
   freeFilter: { ...DEFAULT_FREE_FILTER, tags: [] },
   draftTags: [], freeFilterInitial: false, freeEligible: [],
@@ -93,7 +100,8 @@ const ids = [
   'flagSubmitButton', 'flagCancelButton',
   'hardApiForm', 'deepSeekApiKeyInput', 'hardApiMessage', 'hardApiConfirmButton',
   'homeLeaderboardModal', 'homeLeaderboardCloseButton', 'homeLeaderboardClassicTab',
-  'homeLeaderboardHardTab', 'homeLeaderboardDay', 'homeLeaderboardStatus', 'homeLeaderboardBody',
+  'homeLeaderboardHardTab', 'homeLeaderboardRange', 'homeLeaderboardDay',
+  'homeLeaderboardStatus', 'homeLeaderboardBody',
   'gameGuideModal', 'gameGuideCloseButton',
   'freeFilterModal', 'freeFilterCloseButton', 'freeFilterForm',
   'freeStartDate', 'freeEndDate', 'freeMinScore', 'freeMaxScore', 'freeMaxRank',
@@ -359,6 +367,7 @@ function bindEvents() {
   els.homeLeaderboardCloseButton.addEventListener('click', closeHomeLeaderboard);
   els.homeLeaderboardClassicTab.addEventListener('click', () => void selectHomeLeaderboardMode('classic'));
   els.homeLeaderboardHardTab.addEventListener('click', () => void selectHomeLeaderboardMode('hard'));
+  els.homeLeaderboardRange.addEventListener('change', () => void selectHomeLeaderboardRange(els.homeLeaderboardRange.value));
   els.homeLeaderboardModal.addEventListener('click', (event) => {
     if (event.target === els.homeLeaderboardModal) closeHomeLeaderboard();
   });
@@ -906,30 +915,51 @@ async function selectHomeLeaderboardMode(mode) {
     button.setAttribute('aria-selected', String(active));
   }
 
+  const range = state.homeLeaderboardRange;
+  const cacheKey = `${mode}:${range}`;
   abortHomeLeaderboard();
   els.homeLeaderboardBody.replaceChildren();
   els.homeLeaderboardDay.textContent = '';
-  setFormMessage(els.homeLeaderboardStatus, '正在载入今日完整榜单…', 'loading');
+  setFormMessage(els.homeLeaderboardStatus, `正在载入${HOME_LEADERBOARD_RANGES[range]}完整榜单…`, 'loading');
   let requestController = null;
   try {
-    let data = state.homeLeaderboardCache.get(mode);
+    let data = state.homeLeaderboardCache.get(cacheKey);
     if (!data) {
       requestController = new AbortController();
       state.homeLeaderboardController = requestController;
-      data = await getLeaderboard(mode, requestController.signal);
-      state.homeLeaderboardCache.set(mode, data);
+      data = await getLeaderboard(mode, range, requestController.signal);
+      state.homeLeaderboardCache.set(cacheKey, data);
     }
-    if (state.homeLeaderboardMode !== mode || els.homeLeaderboardModal.classList.contains('hidden')) return;
-    els.homeLeaderboardDay.textContent = data.dayKey ? `${data.dayKey}（北京时间）` : '';
-    renderLeaderboardRows(els.homeLeaderboardBody, data.entries, mode);
+    if (state.homeLeaderboardMode !== mode
+      || state.homeLeaderboardRange !== range
+      || els.homeLeaderboardModal.classList.contains('hidden')) return;
+    els.homeLeaderboardDay.textContent = formatHomeLeaderboardDay(data);
+    renderLeaderboardRows(els.homeLeaderboardBody, data.entries, mode,
+      range === 'today' ? '今天还没有上榜记录' : '该时间范围内还没有上榜记录');
     setFormMessage(els.homeLeaderboardStatus, `共 ${data.entries.length} 位上榜用户`, 'success');
   } catch (error) {
-    if (error.name !== 'AbortError' && state.homeLeaderboardMode === mode) {
+    if (error.name !== 'AbortError'
+      && state.homeLeaderboardMode === mode
+      && state.homeLeaderboardRange === range) {
       setFormMessage(els.homeLeaderboardStatus, error.message, 'error');
     }
   } finally {
     if (state.homeLeaderboardController === requestController) state.homeLeaderboardController = null;
   }
+}
+
+function selectHomeLeaderboardRange(range) {
+  if (!(range in HOME_LEADERBOARD_RANGES)) return;
+  state.homeLeaderboardRange = range;
+  void selectHomeLeaderboardMode(state.homeLeaderboardMode);
+}
+
+function formatHomeLeaderboardDay(data) {
+  const suffix = '（北京时间）';
+  if (data.range && data.range !== 'today' && data.startDayKey) {
+    return `${data.startDayKey} ~ ${data.dayKey}${suffix}`;
+  }
+  return data.dayKey ? `${data.dayKey}${suffix}` : '';
 }
 
 async function ensureCatalog() {
@@ -1725,7 +1755,7 @@ async function finalizeResult(result, ranked) {
         state.leaderboardController.signal,
         state.activePlayId ?? await state.playStartPromise,
       )
-      : await getLeaderboard(result.mode, state.leaderboardController.signal);
+      : await getLeaderboard(result.mode, 'today', state.leaderboardController.signal);
     renderLeaderboard(data, result.mode);
     const status = profile.username
       ? data.personalBest?.rank
@@ -1745,13 +1775,13 @@ function renderLeaderboard(data, mode) {
   renderLeaderboardRows(els.leaderboardBody, data.entries, mode);
 }
 
-function renderLeaderboardRows(body, entries, mode) {
+function renderLeaderboardRows(body, entries, mode, emptyMessage = '今天还没有上榜记录') {
   body.replaceChildren();
   if (!entries.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 6;
-    cell.textContent = '今天还没有上榜记录';
+    cell.textContent = emptyMessage;
     row.append(cell);
     body.append(row);
     return;

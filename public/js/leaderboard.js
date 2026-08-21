@@ -48,7 +48,7 @@ export function saveLeaderboardProfile(username) {
 
 export async function submitLeaderboardResult(result, signal = undefined, playId = null) {
   const profile = readLeaderboardProfile();
-  if (!profile.username) return getLeaderboard(result.mode, signal);
+  if (!profile.username) return getLeaderboard(result.mode, "today", signal);
   return requestLeaderboard(`?mode=${encodeURIComponent(result.mode)}`, {
     method: "POST",
     signal,
@@ -66,8 +66,10 @@ export async function submitLeaderboardResult(result, signal = undefined, playId
   });
 }
 
-export function getLeaderboard(mode, signal = undefined) {
-  return requestLeaderboard(`?mode=${encodeURIComponent(mode)}`, { signal });
+export function getLeaderboard(mode, range = "today", signal = undefined) {
+  const params = new URLSearchParams({ mode });
+  if (range && range !== "today") params.set("range", range);
+  return requestLeaderboard(`?${params.toString()}`, { signal });
 }
 
 export function normalizeUsername(value) {
@@ -86,6 +88,8 @@ async function requestLeaderboard(query, options) {
   if (!response.ok) throw new Error(data?.error || `排行榜请求失败（HTTP ${response.status}）`);
   return {
     dayKey: String(data?.dayKey || ""),
+    startDayKey: String(data?.startDayKey || ""),
+    range: String(data?.range || "today"),
     mode: String(data?.mode || ""),
     entries: Array.isArray(data?.entries) ? data.entries : [],
     personalBest: data?.personalBest || null,
