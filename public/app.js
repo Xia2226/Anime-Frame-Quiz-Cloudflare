@@ -94,7 +94,7 @@ const ids = [
   'backButton', 'gameModeLabel', 'gameTitle', 'debugFinishButton', 'freeFilterButton',
   'progressValue', 'progressLabel', 'primaryMetric', 'primaryMetricLabel',
   'secondaryMetric', 'secondaryMetricLabel', 'timerStat', 'timerValue', 'poolStat',
-  'poolCount', 'hardHint', 'timerTrack', 'timerBar', 'loadingLayer', 'loadingText', 'animeFrame', 'framePanel',
+  'poolCount', 'hardHint', 'networkHint', 'timerTrack', 'timerBar', 'loadingLayer', 'loadingText', 'animeFrame', 'framePanel',
   'statusText', 'skipButton', 'options', 'feedback', 'hardApiModal', 'hardApiCloseButton',
   'flagQuestionButton', 'flagPopover', 'flagContext', 'flagNote', 'flagMessage',
   'flagSubmitButton', 'flagCancelButton',
@@ -516,6 +516,7 @@ function showGameShell(mode) {
   els.timerTrack.classList.toggle('hidden', !timed);
   els.poolStat.classList.toggle('hidden', mode !== 'hard');
   els.hardHint.classList.toggle('hidden', mode !== 'hard');
+  els.networkHint.classList.add('hidden');
   els.primaryMetricLabel.textContent = mode === 'hard' ? '正确率' : '得分';
   els.secondaryMetricLabel.textContent = mode === 'hard' ? '答对题数' : '正确率';
   els.progressLabel.textContent = '进度';
@@ -1380,6 +1381,8 @@ function renderFeedback(answer) {
 
 function renderEngineError(error, retryAction = null) {
   if (error?.name === 'AbortError') return;
+  // 经典/自由模式的截图来自海外图源，加载失败时提示可开启代理后重试
+  if (state.mode !== 'hard') els.networkHint.classList.remove('hidden');
   els.loadingLayer.classList.remove('hidden');
   els.loadingText.textContent = error?.message || '题目加载失败';
   els.statusText.textContent = '暂时无法载入题目';

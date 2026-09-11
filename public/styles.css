@@ -523,7 +523,7 @@ button:disabled { opacity: .52; cursor: not-allowed; transform: none !important;
   transition: transform .1s linear, background .2s ease;
 }
 .timerTrack.urgent span { background: linear-gradient(90deg, #ef4444, #f97316); }
-.hardHint {
+.gameHint {
   margin: 10px 4px 0;
   padding: 11px 14px;
   display: flex;
@@ -539,7 +539,7 @@ button:disabled { opacity: .52; cursor: not-allowed; transform: none !important;
   border-radius: 12px;
   box-shadow: 0 4px 14px rgba(49, 77, 204, .12);
 }
-.hardHint strong {
+.gameHint strong {
   flex: 0 0 auto;
   padding: 2px 8px;
   border-radius: 999px;
